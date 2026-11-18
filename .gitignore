@@ -1,0 +1,21 @@
+node_modules/
+server/config.json
+.expo/
+dist/
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+credentials.json
+android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+
+*.exe
+
+# Large model weights are provisioned on the build machine by npm run lyrics:models.
+assets/models/*.pte
+assets/models/*.bin
+assets/models/*.part

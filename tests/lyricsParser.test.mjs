@@ -32,3 +32,13 @@ test('offsets, instrumental gaps, and empty files', () => {
   assert.deepEqual(parseLyrics('[ar:Artist]\n\n').lines, []);
   assert.equal(activeLyricIndex([], 5), -1);
 });
+
+test('enhanced LRC preserves word timestamps, offsets and repeated lines', () => {
+  const result = parseLyrics('[offset:-250]\n[00:02][00:12]<00:02>Hello <00:03.50>world<00:04.00>');
+  assert.equal(result.lines[0].text, 'Hello world');
+  assert.deepEqual(result.lines[0].words, [
+    { word: 'Hello', start: 1.75, end: 3.25 },
+    { word: 'world', start: 3.25, end: 3.75 },
+  ]);
+  assert.deepEqual(result.lines[1].words.map((word) => word.start), [11.75, 13.25]);
+});

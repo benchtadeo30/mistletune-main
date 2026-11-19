@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  FlatList,
   Pressable,
   ScrollView,
   StatusBar,
@@ -115,6 +116,11 @@ function UtilityContent({ page, initialQuery, initialCategory, autoPlay = false 
   const visibleItems = isLibrary
     ? [...items].sort((first, second) => (first.title || '').localeCompare(second.title || '', undefined, { sensitivity: 'base', numeric: true }) * (librarySortAscending ? 1 : -1))
     : items;
+  const handleItemSelect = useCallback((item) => {
+    if (item.track) { playTrack(item.track); router.push('/Player'); }
+    else if (item.album) router.push({ pathname: '/Albums', params: { albumId: item.album.routeId ?? item.id } });
+    else router.push('/Albums');
+  }, [playTrack]);
 
   const autoPlayTriggered = useRef(false);
   useEffect(() => {
@@ -193,10 +199,7 @@ function UtilityContent({ page, initialQuery, initialCategory, autoPlay = false 
                 : searchCategory === 'Songs' ? 'Songs' : searchCategory === 'Albums' ? 'Albums' : 'Browse music'}
             </Text>
             {query.trim() || searchCategory !== 'All' ? (
-              <ItemList items={items} bottomInset={insets.bottom} christmas={isSearch} onSelect={(item) => {
-                if (item.track) { playTrack(item.track); router.push('/Player'); }
-                else router.push({ pathname: '/Albums', params: { albumId: item.album?.routeId ?? item.id } });
-              }} />
+              <ItemList items={items} bottomInset={insets.bottom} christmas={isSearch} onSelect={handleItemSelect} />
             ) : (
               <View style={[styles.browseCards, styles.christmasBrowseCards]}>
                 <Pressable accessibilityRole="button" onPress={() => router.push('/Albums')} style={[styles.browseCard, styles.christmasBrowseCard, styles.albumBrowseCard]}>
@@ -262,11 +265,7 @@ function UtilityContent({ page, initialQuery, initialCategory, autoPlay = false 
                 <Text style={{ flex: 1, color: theme.colors.cream, fontFamily: 'NunitoExtraBold', fontSize: 14 }}>Benjie’s Playlist</Text>
                 <Ionicons name="chevron-forward" size={19} color={theme.colors.gold} />
               </Pressable>}
-              <ItemList items={visibleItems} bottomInset={insets.bottom} compact christmas emptyMessage={libraryCategory === 'Favorites' ? 'No favorites yet. Tap a heart on a song or album to save it here.' : 'No music here yet. Add songs in Settings.'} onSelect={(item) => {
-                if (item.track) { playTrack(item.track); router.push('/Player'); }
-                else if (item.album) router.push({ pathname: '/Albums', params: { albumId: item.album.routeId ?? item.id } });
-                else router.push('/Albums');
-              }} />
+              <ItemList items={visibleItems} bottomInset={insets.bottom} compact christmas emptyMessage={libraryCategory === 'Favorites' ? 'No favorites yet. Tap a heart on a song or album to save it here.' : 'No music here yet. Add songs in Settings.'} onSelect={handleItemSelect} />
             </View>
           </>
         )}
@@ -282,34 +281,41 @@ function UtilityContent({ page, initialQuery, initialCategory, autoPlay = false 
   );
 }
 
-function ItemList({ items, bottomInset, compact = false, christmas = false, onSelect, emptyMessage }) {
+const ItemList = memo(function ItemList({ items, bottomInset, compact = false, christmas = false, onSelect, emptyMessage }) {
   const { styles, colors: COLORS, searchColors: SEARCH_COLORS } = useThemeStyles(createStyles, DEFAULT_COLORS, DEFAULT_SEARCH_COLORS);
+  const renderItem = useCallback(({ item }) => (
+    <Pressable accessibilityRole="button" onPress={() => onSelect?.(item)} style={[styles.itemRow, compact && styles.compactItemRow, christmas && styles.christmasItemRow]}>
+      <SongArtwork source={item.image} style={[styles.itemArt, compact && styles.compactItemArt, christmas && styles.christmasItemArt]} iconSize={22} />
+      <View style={styles.itemDetails}>
+        <Text numberOfLines={1} style={[styles.itemTitle, christmas && styles.christmasItemTitle]}>{item.title}</Text>
+        <Text numberOfLines={1} style={[styles.itemSubtitle, christmas && styles.christmasItemSubtitle]}>{item.subtitle}</Text>
+      </View>
+      <Ionicons name={christmas && item.track ? 'play-circle-outline' : 'chevron-forward'} size={christmas && item.track ? 31 : 19} color={christmas ? SEARCH_COLORS.gold : COLORS.green} />
+    </Pressable>
+  ), [COLORS.green, SEARCH_COLORS.gold, compact, christmas, onSelect, styles]);
+  const keyExtractor = useCallback((item) => `${item.type || 'item'}:${item.id}`, []);
+  const empty = <Text style={styles.emptyMessage}>{emptyMessage ?? (compact ? 'No music here yet. Add songs in Settings.' : 'No results found. Try another search.')}</Text>;
   return (
-    <ScrollView
+    <FlatList
+      data={items}
+      keyExtractor={keyExtractor}
+      renderItem={renderItem}
+      ListEmptyComponent={empty}
+      initialNumToRender={12}
+      maxToRenderPerBatch={8}
+      windowSize={7}
+      updateCellsBatchingPeriod={40}
       contentContainerStyle={[
         styles.itemList,
         compact && styles.compactItemList,
         { paddingBottom: Math.max(bottomInset, 8) + (compact ? 60 : 72) },
       ]}
-      style={compact && styles.libraryList}
+      style={styles.libraryList}
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
-    >
-      {items.length > 0 ? items.map((item) => (
-        <Pressable key={`${item.title}-${item.subtitle}`} accessibilityRole="button" onPress={() => onSelect?.(item)} style={[styles.itemRow, compact && styles.compactItemRow, christmas && styles.christmasItemRow]}>
-          <SongArtwork source={item.image} style={[styles.itemArt, compact && styles.compactItemArt, christmas && styles.christmasItemArt]} iconSize={22} />
-          <View style={styles.itemDetails}>
-            <Text numberOfLines={1} style={[styles.itemTitle, christmas && styles.christmasItemTitle]}>{item.title}</Text>
-            <Text numberOfLines={1} style={[styles.itemSubtitle, christmas && styles.christmasItemSubtitle]}>{item.subtitle}</Text>
-          </View>
-          <Ionicons name={christmas && item.track ? 'play-circle-outline' : 'chevron-forward'} size={christmas && item.track ? 31 : 19} color={christmas ? SEARCH_COLORS.gold : COLORS.green} />
-        </Pressable>
-      )) : (
-        <Text style={styles.emptyMessage}>{emptyMessage ?? (compact ? 'No music here yet. Add songs in Settings.' : 'No results found. Try another search.')}</Text>
-      )}
-    </ScrollView>
+    />
   );
-}
+});
 
 function NavItem({ label, icon, selected, christmas = false, onPress }) {
   const { styles, colors: COLORS, searchColors: SEARCH_COLORS } = useThemeStyles(createStyles, DEFAULT_COLORS, DEFAULT_SEARCH_COLORS);

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { Platform, StyleSheet } from 'react-native';
 import { Image } from 'expo-image';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { useIsFocused } from 'expo-router';
 import { useTheme } from '../themes/ThemeProvider';
 
 // Full-screen looping background from the active theme. Themes provide either
@@ -10,12 +11,12 @@ import { useTheme } from '../themes/ThemeProvider';
 // is the current example. Swapping themes reloads without recreating players.
 export default function ThemeVideoBackground() {
   const { theme } = useTheme();
+  const isFocused = useIsFocused();
   const videoSource = typeof theme.assets.homeVideo === 'number' ? theme.assets.homeVideo : null;
   const imageSource = theme.assets.homeVideoImage ?? null;
   const player = useVideoPlayer(videoSource, (videoPlayer) => {
     videoPlayer.loop = true;
     videoPlayer.muted = true;
-    if (videoSource) videoPlayer.play();
   });
   const currentSourceRef = useRef(videoSource);
 
@@ -31,17 +32,28 @@ export default function ThemeVideoBackground() {
     player.replaceAsync(videoSource)
       .then(() => {
         if (!active) return;
-        try { player.loop = true; player.play(); } catch { /* source may not be ready yet */ }
+        try {
+          player.loop = true;
+          if (isFocused) player.play();
+          else player.pause();
+        } catch { /* source may not be ready yet */ }
       })
       .catch(() => {});
     return () => { active = false; };
-  }, [videoSource, player]);
+  }, [videoSource, player, isFocused]);
+
+  useEffect(() => {
+    try {
+      if (isFocused && videoSource) player.play();
+      else player.pause();
+    } catch { /* player may not have a source yet */ }
+  }, [isFocused, player, videoSource]);
 
   if (imageSource) {
     return (
       <Image
         source={imageSource}
-        autoplay
+        autoplay={isFocused}
         isAnimated
         contentFit="cover"
         style={StyleSheet.absoluteFill}

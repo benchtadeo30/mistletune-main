@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Directory, File, Paths } from 'expo-file-system';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { deleteVideoFile } from './videoFileService';
 
 const PODCAST_VIDEO_KEY = 'music-player.podcast-videos';
@@ -37,9 +38,18 @@ export async function getPodcastVideos() {
   try {
     const raw = await AsyncStorage.getItem(PODCAST_VIDEO_KEY);
     const videos = raw ? JSON.parse(raw) : [];
-    return Array.isArray(videos)
-      ? videos.filter((video) => video && typeof video.id === 'string' && typeof video.uri === 'string')
-      : [];
+    if (!Array.isArray(videos)) return [];
+    const validVideos = videos.filter((video) => video && typeof video.id === 'string' && typeof video.uri === 'string');
+    const available = await Promise.all(validVideos.map(async (video) => {
+      if (!video.uri.startsWith('file://')) return video;
+      try {
+        const info = await LegacyFileSystem.getInfoAsync(video.uri);
+        return info.exists && (!Number.isFinite(info.size) || info.size > 0) ? video : null;
+      } catch {
+        return null;
+      }
+    }));
+    return available.filter(Boolean);
   } catch {
     return [];
   }

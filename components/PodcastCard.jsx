@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { createVideoPlayer } from 'expo-video';
+import * as LegacyFileSystem from 'expo-file-system/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useThemeStyles } from '../themes/ThemeProvider';
@@ -11,14 +12,48 @@ let previewQueue = Promise.resolve();
 const pending = new Map();
 const previews = new Map();
 
+async function isVideoFileAvailable(uri) {
+  if (!uri?.startsWith('file://')) return true;
+  try {
+    const info = await LegacyFileSystem.getInfoAsync(uri);
+    return info.exists && info.size !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function rememberPreview(key, result) {
+  previews.set(key, {
+    result,
+    expiresAt: result.image ? Infinity : Date.now() + 30_000,
+  });
+  if (previews.size > 24) previews.delete(previews.keys().next().value);
+}
+
 function getPreview(video) {
   const key = `podcast-preview-v1:${video.id}:${video.uri}`;
+  const checkVideoFile = isVideoFileAvailable(video.uri).then(async (available) => {
+    if (available) return true;
+    await AsyncStorage.removeItem(key);
+    return false;
+  });
+  return checkVideoFile.then((available) => {
+    if (!available) return { image: null, duration: 0, unavailable: true };
+    return getAvailablePreview(video, key);
+  });
+}
+
+function getAvailablePreview(video, key) {
   if (video.coverUri) {
     return AsyncStorage.getItem(key).then((duration) => Number(duration) > 0
       ? { image: { uri: video.coverUri }, duration: Number(duration) }
       : getPreview({ id: video.id, uri: video.uri }));
   }
-  if (previews.has(key)) return Promise.resolve(previews.get(key));
+  if (previews.has(key)) {
+    const cached = previews.get(key);
+    if (cached.expiresAt > Date.now()) return Promise.resolve(cached.result);
+    previews.delete(key);
+  }
   if (pending.has(key)) return pending.get(key);
   const task = previewQueue.then(async () => {
     let image = null;
@@ -38,7 +73,13 @@ function getPreview(video) {
         });
         timer = setTimeout(() => reject(new Error('Video preview timed out')), 12000);
       });
-      const [, source] = await Promise.all([player.replaceAsync(video.uri), loaded]);
+      // Android's thumbnail retriever treats encoded file:// paths as literal
+      // filesystem paths in Expo Go. A content URI lets it open the same local
+      // file through Android's ContentResolver instead.
+      const thumbnailSource = Platform.OS === 'android' && video.uri.startsWith('file://')
+        ? await LegacyFileSystem.getContentUriAsync(video.uri)
+        : video.uri;
+      const [, source] = await Promise.all([player.replaceAsync(thumbnailSource), loaded]);
       const seconds = source.duration || player.duration || 0;
       await AsyncStorage.setItem(key, String(seconds));
       let thumbnail = image;
@@ -49,15 +90,22 @@ function getPreview(video) {
         if (!thumbnail) throw new Error('No thumbnail available');
         try { await Image.writeToCacheAsync(thumbnail, key); } catch {}
       } catch (error) {
+        if (!(await isVideoFileAvailable(video.uri))) {
+          await AsyncStorage.removeItem(key);
+          return { image: null, duration: 0, unavailable: true };
+        }
         thumbnailError = error.message;
         console.warn('Podcast thumbnail extraction failed:', error);
       }
       const result = { image: thumbnail, duration: seconds, thumbnailError };
-      if (thumbnail) {
-        previews.set(key, result);
-        if (previews.size > 24) previews.delete(previews.keys().next().value);
-      }
+      rememberPreview(key, result);
       return result;
+    } catch (error) {
+      if (!(await isVideoFileAvailable(video.uri))) {
+        await AsyncStorage.removeItem(key);
+        return { image: null, duration: 0, unavailable: true };
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
       subscription?.remove();
@@ -81,7 +129,12 @@ export default function PodcastCard({ video, onPress, onRename, horizontal = fal
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let active = true;
-    getPreview({ id: video.id, uri: video.uri, coverUri: video.coverUri }).then((result) => { if (active) setPreview(result); }).catch((error) => {
+    getPreview({ id: video.id, uri: video.uri, coverUri: video.coverUri }).then((result) => {
+      if (active) {
+        setPreview(result);
+        setFailed(Boolean(result.unavailable));
+      }
+    }).catch((error) => {
       if (active) setFailed(true);
       console.warn('Podcast preview unavailable:', error.message);
     });

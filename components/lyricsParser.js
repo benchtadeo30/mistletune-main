@@ -5,10 +5,25 @@ export function parseLyrics(text) {
   for (const line of raw.split('\n')) {
     const tags = [...line.matchAll(/\[(\d+):([0-5]?\d)(?:[.:](\d{1,3}))?\]/g)];
     const content = line.replace(/\[[^\]]*\]/g, '').trim();
-    for (const tag of tags) timed.push({ time: Math.max(0, Number(tag[1]) * 60 + Number(tag[2]) + Number(`0.${tag[3] || 0}`) + offset), text: content || '♪' });
+    const wordTags = [...content.matchAll(/<(\d+):([0-5]?\d)(?:[.:](\d{1,3}))?>/g)];
+    const stamp = (tag) => Number(tag[1]) * 60 + Number(tag[2]) + Number(`0.${tag[3] || 0}`);
+    const words = wordTags.map((tag, index) => ({
+      word: content.slice(tag.index + tag[0].length, wordTags[index + 1]?.index ?? content.length).trim(),
+      start: stamp(tag) + offset,
+      ...(wordTags[index + 1] ? { end: stamp(wordTags[index + 1]) + offset } : {}),
+    })).filter((word) => word.word);
+    for (const tag of tags) {
+      // Repeated line timestamps reuse the same relative word timing.
+      const shift = stamp(tag) - stamp(tags[0]);
+      timed.push({
+        time: Math.max(0, stamp(tag) + offset),
+        text: content.replace(/<\d+:[0-5]?\d(?:[.:]\d{1,3})?>/g, '').trim() || '♪',
+        ...(words.length ? { words: words.map((word) => ({ ...word, start: Math.max(0, word.start + shift), ...(word.end !== undefined ? { end: Math.max(0, word.end + shift) } : {}) })) } : {}),
+      });
+    }
   }
   if (timed.length) return { synced: true, lines: timed.sort((a, b) => a.time - b.time) };
-  return { synced: false, lines: raw.split('\n').filter((line) => !/^\s*\[[a-z]+:.*\]\s*$/i.test(line)).map((line) => ({ time: null, text: line.trim() })).filter((line) => line.text) };
+  return { synced: false, lines: raw.split('\n').filter((line) => !/^\s*\[(?:[a-z]+|#):.*\]\s*$/i.test(line)).map((line) => ({ time: null, text: line.trim() })).filter((line) => line.text) };
 }
 
 export function activeLyricIndex(lines, time) {

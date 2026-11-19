@@ -1,6 +1,8 @@
 node_modules/
+.git/
 .expo/
 dist/
+.expo-verify-export*/
 .env
 .env.*
 !.env.example
@@ -11,10 +13,11 @@ android/local.properties
 android/.gradle/
 android/build/
 android/app/build/
-assets/models/*.part
+android/.kotlin/
+assets/models/
 server/.venv/
 server/.cache/
 server/config.json
 server/*.log
-# Qwen weights are downloaded only by the local Python server, not app builds.
-# Deliberately include assets/models/*.pte and *.bin in the EAS upload.
+gradle-*.log
+server-metro*.log

@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { AccountSettings } from './AccountForm';
 import {
   ActivityIndicator,
   Pressable,
@@ -12,12 +13,16 @@ import {
 import ThemeImageBackground from './ThemeImageBackground';
 import ThemedActionDialog from './PodcastActionDialog';
 import { Ionicons } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlayback } from './PlaybackContext';
 
 import { useTheme, useThemeStyles } from '../themes/ThemeProvider';
 import ThemePicker from '../themes/ThemePicker';
+
+const isAndroidExpoGo = Platform.OS === 'android'
+  && (Constants.expoGoConfig != null || Constants.appOwnership === 'expo');
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -75,7 +80,7 @@ export default function SettingsScreen() {
     setBatchProgress(null);
     setStatusMessage('Please select your music folder.');
     try {
-      const { trackCount, lyricResults } = await chooseMusicFolder((progressInfo) => {
+      const { trackCount } = await chooseMusicFolder((progressInfo) => {
         if (typeof progressInfo === 'string') {
           setStatusMessage(progressInfo);
         } else if (progressInfo?.message) {
@@ -84,15 +89,7 @@ export default function SettingsScreen() {
         }
       });
       const songsLabel = trackCount === 1 ? 'song' : 'songs';
-      if (lyricResults?.unavailable) {
-        setStatusMessage(trackCount + ' ' + songsLabel + ' added. ' + lyricResults.message);
-      } else if (lyricResults?.errors && !lyricResults?.processed) {
-        setStatusMessage(trackCount + ' ' + songsLabel + ' added. Offline lyrics could not be generated. Open Lyrics on a song to try again.');
-      } else if (lyricResults?.errors) {
-        setStatusMessage(`${trackCount} ${songsLabel} added. Lyrics prepared for ${lyricResults.processed}; ${lyricResults.errors} could not be prepared.`);
-      } else {
-        setStatusMessage(`${trackCount} ${songsLabel} added. Lyrics prepared for ${lyricResults?.processed || 0}; ${lyricResults?.skipped || 0} already had lyrics.`);
-      }
+      setStatusMessage(trackCount + ' ' + songsLabel + ' added. Download lyrics for each song from its Lyrics screen when you want.');
     } catch (error) {
       setStatusMessage(error.message || 'Could not load songs from this folder.');
     } finally {
@@ -117,17 +114,8 @@ export default function SettingsScreen() {
         }
       });
       const trackCount = typeof result === 'object' && result !== null ? (result.count ?? result.trackCount ?? 0) : (Number(result) || 0);
-      const lyricResults = typeof result === 'object' && result !== null ? result.lyricResults : null;
       const songsLabel = trackCount === 1 ? 'song' : 'songs';
-      if (lyricResults?.unavailable) {
-        setStatusMessage(trackCount + ' ' + songsLabel + ' added. ' + lyricResults.message);
-      } else if (lyricResults?.errors && !lyricResults?.processed) {
-        setStatusMessage(trackCount + ' ' + songsLabel + ' added. Offline lyrics could not be generated. Open Lyrics on a song to try again.');
-      } else if (lyricResults?.errors) {
-        setStatusMessage(`${trackCount} ${songsLabel} added. Lyrics prepared for ${lyricResults.processed}; ${lyricResults.errors} could not be prepared.`);
-      } else {
-        setStatusMessage(`${trackCount} ${songsLabel} added! Lyrics prepared for ${lyricResults?.processed || 0}; ${lyricResults?.skipped || 0} already had lyrics.`);
-      }
+      setStatusMessage(trackCount + ' ' + songsLabel + ' added. Download lyrics for each song from its Lyrics screen when you want.');
     } catch (error) {
       setStatusMessage(error.message || 'Could not add songs.');
     } finally {
@@ -181,6 +169,7 @@ export default function SettingsScreen() {
           showsVerticalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
         >
+          <AccountSettings />
           <View style={styles.sectionBannerWrap}>
             <View style={styles.sectionBannerIcon}><Ionicons name="color-palette-outline" size={22} color={COLORS.gold} /></View>
             <Text style={styles.sectionBannerText}>Appearance</Text>
@@ -208,9 +197,14 @@ export default function SettingsScreen() {
             </Text>
             <Text style={styles.helperText}>
               {Platform.OS === 'android'
-                ? 'Tap below to select your folder. Your songs and lyrics will be set up automatically.'
+                ? 'Songs are added immediately. Download lyrics for each song from its Lyrics screen when you want.'
                 : 'Supported formats: MP3, M4A, WAV, AAC, OGG, and FLAC.'}
             </Text>
+            {isAndroidExpoGo ? (
+              <Text style={styles.helperText}>
+                Expo Go can try background playback. Android notification controls and sustained playback require a development build with the media service.
+              </Text>
+            ) : null}
             {Platform.OS === 'android' ? (
               <Pressable
                 accessibilityRole="button"
@@ -245,11 +239,7 @@ export default function SettingsScreen() {
               <View style={styles.batchBox}>
                 <View style={styles.batchRow}>
                   <ActivityIndicator size="small" color={COLORS.green} />
-                  <Text style={styles.batchTitle}>
-                    {batchProgress?.stage === 'transcribing' && batchProgress?.total
-                      ? `Getting lyrics ready (${batchProgress.current} of ${batchProgress.total})`
-                      : 'Adding songs to library...'}
-                  </Text>
+                  <Text style={styles.batchTitle}>{batchProgress?.message || 'Adding songs to library...'}</Text>
                 </View>
                 {batchProgress?.track?.title ? (
                   <Text numberOfLines={1} style={styles.batchTrackName}>
@@ -277,7 +267,7 @@ export default function SettingsScreen() {
                   </View>
                 ) : null}
                 <Text style={styles.batchNote}>
-                  Getting lyrics ready now so you can see them instantly while playing.
+                  {batchProgress?.stage === 'lyrics' ? 'Checking the lyrics library. Word highlighting appears when word timestamps are available.' : 'Adding music files to your library.'}
                 </Text>
               </View>
             )}

@@ -9,6 +9,7 @@ import {
   Nunito_800ExtraBold,
 } from '@expo-google-fonts/nunito';
 import { PlaybackProvider } from '../components/PlaybackContext';
+import { AccountProvider, useAccount } from '../components/AccountContext';
 import { FavoritesProvider } from '../components/FavoritesContext';
 import MiniPlayerOverlay from '../components/MiniPlayerOverlay';
 import ChatBot from '../components/ChatBot';
@@ -20,9 +21,6 @@ import ThemeRestartRoute from '../themes/ThemeRestartRoute';
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 export default function Layout() {
-  const pathname = usePathname();
-  const isIntro = pathname === '/';
-  const isHome = pathname === '/Music';
   useFonts({
     NunitoRegular: Nunito_400Regular,
     NunitoMedium: Nunito_500Medium,
@@ -31,16 +29,34 @@ export default function Layout() {
     NunitoExtraBold: Nunito_800ExtraBold,
   });
 
-  return (
-    <ThemeProvider>
-    <PlaybackProvider>
-    <FavoritesProvider>
-    <>
-    <Stack screenOptions={{
+  return <ThemeProvider><AccountProvider><AccountNavigator /></AccountProvider></ThemeProvider>;
+}
+
+function MusicLayout({ children, accountId }) {
+  const pathname = usePathname();
+  return <PlaybackProvider libraryId={accountId}><FavoritesProvider>
+    {children}
+    <ThemeRestartRoute />
+    {pathname !== '/' && <MiniPlayerOverlay />}
+    {pathname !== '/' && <QueueSheet />}
+    {pathname === '/Music' && <ChatBot />}
+  </FavoritesProvider></PlaybackProvider>;
+}
+
+function AccountNavigator() {
+  const { account } = useAccount();
+  return <Stack layout={({ children }) => account
+    ? <MusicLayout key={account.id} accountId={account.id}>{children}</MusicLayout>
+    : children} screenOptions={{
         headerTransparent: true,
         headerTintColor: '#fff',
         headerShadowVisible: true
     }}>
+      <Stack.Protected guard={!account}>
+        <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="register" options={{ headerShown: false }} />
+      </Stack.Protected>
+      <Stack.Protected guard={Boolean(account)}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="Music" options={{ headerShown: false }} />
       <Stack.Screen name="Artist" options={{ headerShown: false }} />
@@ -53,14 +69,6 @@ export default function Layout() {
       <Stack.Screen name="Settings" options={{ headerShown: false }} />
       <Stack.Screen name="podcast" options={{ headerShown: false }} />
       <Stack.Screen name="podcast-create" options={{ headerShown: false }} />
-    </Stack>
-    <ThemeRestartRoute />
-    {!isIntro && <MiniPlayerOverlay />}
-    {!isIntro && <QueueSheet />}
-    {isHome && <ChatBot />}
-    </>
-    </FavoritesProvider>
-    </PlaybackProvider>
-    </ThemeProvider>
-  );
+      </Stack.Protected>
+    </Stack>;
 }

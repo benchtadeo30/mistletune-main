@@ -56,11 +56,11 @@ const halloween = {
     emblem: christmas.assets.emblem,
     loadingBackground: require('./Halloween/halloween_loading_bg.gif'),
     loadingCharacter: require('./Halloween/halloween_dog_broom.png'),
-    homeVideo: require('../assets/homevideo/halloween_phoebe.mp4'),
+    homeVideo: require('../assets/homevideo/valentines_amanaya.mp4'),
   },
   animatedEmblem: true,
   animatedCharacter: false,
-  homeVideoName: 'halloween_phoebe.mp4',
+  homeVideoName: 'valentines_amanaya.mp4',
 };
 
 const rainy = {
@@ -81,7 +81,7 @@ const rainy = {
     search: require('./rainy theme/rain_search.gif'),
     library: require('./rainy theme/rain_shelf.gif'),
     settings: require('./rainy theme/rain_settings.gif'),
-    collection: require('./rainy theme/rain_podcast.gif'),
+    collection: require('./rainy theme/rain_album.gif'),
     player: require('./rainy theme/rain_album.gif'),
     chat: require('./rainy theme/rain_chatbot.gif'),
     mascot: require('./rainy theme/rain_Costume.png'),

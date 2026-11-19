@@ -5,7 +5,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { router, useIsFocused } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
-import { usePlayback } from './PlaybackContext';
+import { usePlayback, usePlaybackTime } from './PlaybackContext';
 import { useFavorites } from './FavoritesContext';
 import SongArtwork from './SongArtwork';
 import SongCoverDialog from './SongCoverDialog';
@@ -28,8 +28,6 @@ export default function PlayerScreen() {
     currentTrack,
     player,
     playing,
-    currentTime,
-    duration,
     togglePlayback,
     skip,
     seekTo,
@@ -44,6 +42,7 @@ export default function PlayerScreen() {
     queueTracks,
     queueKind,
   } = usePlayback();
+  const { currentTime, duration } = usePlaybackTime();
   const { isTrackFavorite, toggleTrackFavorite } = useFavorites();
   const [trackWidth, setTrackWidth] = useState(0);
   const [scrubbingTime, setScrubbingTime] = useState(null);

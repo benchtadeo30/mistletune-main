@@ -1,29 +1,28 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import { setAudioModeAsync, useAudioPlaylist, useAudioPlaylistStatus } from 'expo-audio';
+import { requestNotificationPermissionsAsync, setAudioModeAsync, useAudioPlaylist, useAudioPlaylistStatus } from 'expo-audio';
 import { useVideoPlayer } from 'expo-video';
 import { useEventListener } from 'expo';
-import Constants, { ExecutionEnvironment } from 'expo-constants';
+import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLocalLibraryId } from './localLibraryIdentity';
 import { appendQueueTrack, queueAfterRemoval } from './queueUtils';
 import { getFolderLabel, importSelectedAudioFiles, listImportedAudio, scanMusicFolder, selectMusicFolder, clearLocalLibrary } from './localMusicLibrary';
-import { clearAllGeneratedLyrics } from './generatedLyricsCache';
+import { clearLibraryLyrics } from './lyricsStorage';
 import { addRecentlyPlayed, getRecentlyPlayed } from './recentlyPlayed';
 import { addSavedTrackArtwork, pickTrackArtwork, removeTrackArtwork } from './trackArtwork';
 import * as FileSystem from 'expo-file-system/legacy';
 import { HOME_VIDEO_URI_KEY, HOME_VIDEO_NAME_KEY } from './homeVideoStorage';
 import { pickAndSaveHomeVideo, restoreDefaultHomeVideo } from './videoFileService';
 import { useTheme } from '../themes/ThemeProvider';
-import { batchTranscribeTracks } from './batchTranscription';
-import LyricsPreparationOverlay from './LyricsPreparationOverlay';
 
 const musicFolderKey = (libraryId) => `music-player.music-folder-uri:${libraryId}`;
 const EMPTY_TRACKS = [];
+const isExpoGo = Constants.expoGoConfig != null || Constants.appOwnership === 'expo';
 
 const PlaybackContext = createContext(null);
+const PlaybackTimeContext = createContext(null);
 
-export function PlaybackProvider({ children }) {
+export function PlaybackProvider({ children, libraryId }) {
   const { theme } = useTheme();
   const homeVideo = theme.assets.homeVideo;
   const defaultVideoName = theme.homeVideoName;
@@ -36,6 +35,9 @@ export function PlaybackProvider({ children }) {
   // screen never stays blank while AsyncStorage checks for a custom override.
   const homeVideoPlayer = useVideoPlayer(homeVideo, (videoPlayer) => {
     videoPlayer.loop = true;
+    videoPlayer.staysActiveInBackground = false;
+    videoPlayer.showNowPlayingNotification = false;
+    videoPlayer.audioMixingMode = 'mixWithOthers';
   });
 
   const setSpeechActive = useCallback((active) => {
@@ -59,6 +61,9 @@ export function PlaybackProvider({ children }) {
             if (!active) return;
             await homeVideoPlayer.replaceAsync({ uri: storedUri });
             Reflect.set(homeVideoPlayer, 'loop', true);
+            Reflect.set(homeVideoPlayer, 'staysActiveInBackground', false);
+            Reflect.set(homeVideoPlayer, 'showNowPlayingNotification', false);
+            Reflect.set(homeVideoPlayer, 'audioMixingMode', 'mixWithOthers');
             if (active) {
               setHomeVideoName(storedName || 'Custom Video');
               setIsCustomHomeVideo(true);
@@ -74,6 +79,9 @@ export function PlaybackProvider({ children }) {
         await homeVideoPlayer.replaceAsync(typeof homeVideo === 'number' ? homeVideo : null);
         if (!active) return;
         Reflect.set(homeVideoPlayer, 'loop', true);
+        Reflect.set(homeVideoPlayer, 'staysActiveInBackground', false);
+        Reflect.set(homeVideoPlayer, 'showNowPlayingNotification', false);
+        Reflect.set(homeVideoPlayer, 'audioMixingMode', 'mixWithOthers');
         setHomeVideoName(defaultVideoName);
         setIsCustomHomeVideo(false);
         setHomeVideoRevision((revision) => revision + 1);
@@ -87,6 +95,9 @@ export function PlaybackProvider({ children }) {
     if (!saved) return null;
     await homeVideoPlayer.replaceAsync({ uri: saved.uri });
     Reflect.set(homeVideoPlayer, 'loop', true);
+    Reflect.set(homeVideoPlayer, 'staysActiveInBackground', false);
+    Reflect.set(homeVideoPlayer, 'showNowPlayingNotification', false);
+    Reflect.set(homeVideoPlayer, 'audioMixingMode', 'mixWithOthers');
     try {
       Reflect.set(homeVideoPlayer, 'currentTime', 0);
     } catch {}
@@ -102,6 +113,9 @@ export function PlaybackProvider({ children }) {
     await homeVideoPlayer.replaceAsync(typeof homeVideo === 'number' ? homeVideo : null);
     await restoreDefaultHomeVideo();
     Reflect.set(homeVideoPlayer, 'loop', true);
+    Reflect.set(homeVideoPlayer, 'staysActiveInBackground', false);
+    Reflect.set(homeVideoPlayer, 'showNowPlayingNotification', false);
+    Reflect.set(homeVideoPlayer, 'audioMixingMode', 'mixWithOthers');
     try {
       Reflect.set(homeVideoPlayer, 'currentTime', 0);
     } catch {}
@@ -117,7 +131,6 @@ export function PlaybackProvider({ children }) {
   const [tracks, setTracks] = useState(EMPTY_TRACKS);
   const [queue, setQueue] = useState({ tracks: EMPTY_TRACKS, kind: 'library' });
   const [musicFolderUri, setMusicFolderUri] = useState(null);
-  const [libraryId, setLibraryId] = useState(null);
   const [recentlyPlayed, setRecentlyPlayed] = useState([]);
   const [shuffleEnabled, setShuffleEnabled] = useState(false);
   const [loopMode, setLoopMode] = useState('all');
@@ -126,7 +139,9 @@ export function PlaybackProvider({ children }) {
   const player = useAudioPlaylist(playlistOptions);
   const status = useAudioPlaylistStatus(player);
   const statusRef = useRef(status);
-  useEffect(() => { statusRef.current = status; });
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
   const playerRef = useRef(player);
   const lockScreenRegistration = useRef(null);
   const preparation = useRef(null);
@@ -134,8 +149,22 @@ export function PlaybackProvider({ children }) {
   const startQueueNowRef = useRef(null);
   const queueResumeRef = useRef(null);
   const [queueOpen, setQueueOpen] = useState(false);
-  const [lyricsPreparation, setLyricsPreparation] = useState(null);
   const [lyricsRevision, setLyricsRevision] = useState(0);
+
+  const ensureNotificationPermission = useCallback(async () => {
+    if (Platform.OS !== 'android' || isExpoGo) return true;
+    try {
+      const response = await requestNotificationPermissionsAsync();
+      return Boolean(response?.granted);
+    } catch (error) {
+      console.warn('Could not request notification permission:', error);
+      return false;
+    }
+  }, []);
+
+  useEffect(() => {
+    ensureNotificationPermission().catch(() => {});
+  }, [ensureNotificationPermission]);
 
   const configureAudioMode = useCallback(() => {
     if (!audioModeReady.current) {
@@ -152,14 +181,14 @@ export function PlaybackProvider({ children }) {
   }, []);
 
   const activateLockScreenControls = useCallback(async (track, queueTracks, recentItem) => {
-    // Expo Go does not contain this app's AudioControlsService. Trying to bind
-    // its Android media session from Expo Go logs a service-binding error.
-    if (Platform.OS === 'web' || (Platform.OS === 'android' && Constants.executionEnvironment === ExecutionEnvironment.StoreClient)) return;
+    if (Platform.OS === 'web') return;
 
     // The native media session must be configured after the audio mode is ready.
     // Otherwise Android can start playback before Expo Audio has the session ready.
     await configureAudioMode();
-    if (playerRef.current !== player) return;
+    if (Platform.OS === 'android') {
+      await ensureNotificationPermission().catch(() => {});
+    }
 
     const artworkUrl = typeof track?.artwork === 'string' ? track.artwork : track?.artwork?.uri;
     const metadata = {
@@ -170,23 +199,18 @@ export function PlaybackProvider({ children }) {
     };
 
     try {
-      const registration = lockScreenRegistration.current;
-      const optionsKey = queueTracks.length > 1;
-      if (registration?.player === player && registration.optionsKey === optionsKey) {
-        player.updateLockScreenMetadata(metadata);
-        return;
-      }
+      const hasMultipleTracks = queueTracks.length > 1;
       player.setActiveForLockScreen(true, metadata, {
-        showNextTrack: queueTracks.length > 1,
-        showPreviousTrack: queueTracks.length > 1,
+        showNextTrack: hasMultipleTracks,
+        showPreviousTrack: hasMultipleTracks,
         showSeekBackward: true,
         showSeekForward: true,
       });
-      lockScreenRegistration.current = { player, optionsKey };
+      lockScreenRegistration.current = { player, trackId: track?.id };
     } catch (error) {
       console.warn('Could not activate Android media controls:', error);
     }
-  }, [configureAudioMode, player]);
+  }, [configureAudioMode, ensureNotificationPermission, player]);
 
   useEffect(() => {
     playerRef.current = player;
@@ -199,7 +223,7 @@ export function PlaybackProvider({ children }) {
   }, [configureAudioMode]);
 
   useEffect(() => {
-    if (Platform.OS === 'web' || (Platform.OS === 'android' && Constants.executionEnvironment === ExecutionEnvironment.StoreClient)) return;
+    if (Platform.OS === 'web') return;
     if (!currentTrack) {
       player.clearLockScreenControls();
       lockScreenRegistration.current = null;
@@ -207,9 +231,9 @@ export function PlaybackProvider({ children }) {
     }
     // Wait for a real, loaded track. Queue changes replace the native player;
     // registering before it is ready races the previous player's cleanup.
-    if (!status.isLoaded || !status.playing) return;
+    if (!status.isLoaded) return;
     activateLockScreenControls(currentTrack, queue.tracks, queue.recentItem).catch(() => {});
-  }, [activateLockScreenControls, currentTrack, player, queue.recentItem, queue.tracks, status.isLoaded, status.playing]);
+  }, [activateLockScreenControls, currentTrack, player, queue.recentItem, queue.tracks, status.isLoaded]);
 
   useEventListener(player, 'trackChanged', ({ currentIndex }) => {
     if (preparation.current) return;
@@ -222,19 +246,30 @@ export function PlaybackProvider({ children }) {
 
   useEffect(() => {
     const pendingTrackId = pendingTrackStart.current;
-    if (!pendingTrackId) return;
+    // A changed playlist creates a fresh native player. Wait for that player
+    // to load before registering its media session; otherwise Android can
+    // silently miss the notification/lock-screen controls for the first track.
+    if (!pendingTrackId || !status.isLoaded) return;
     const index = queue.tracks.findIndex((track) => track.id === pendingTrackId);
-    if (index < 0) return;
+    if (index < 0) {
+      pendingTrackStart.current = null;
+      return;
+    }
     pendingTrackStart.current = null;
     const token = requestNumber.current;
     configureAudioMode().then(() => {
       if (token !== requestNumber.current || preparation.current) return;
-      player.skipTo(index);
-      player.play();
+      return activateLockScreenControls(queue.tracks[index], queue.tracks, queue.recentItem)
+        .catch((error) => console.warn('Could not prepare lock screen controls:', error))
+        .then(() => {
+          if (token !== requestNumber.current || preparation.current) return;
+          player.skipTo(index);
+          player.play();
+        });
     }).catch((error) => {
       console.warn('Could not start playlist playback:', error);
     });
-  }, [configureAudioMode, player, queue]);
+  }, [activateLockScreenControls, configureAudioMode, player, queue, status.isLoaded]);
 
   // Restore the playing track's position after a queue reorder (the playlist
   // re-creates its native player when sources change).
@@ -261,12 +296,6 @@ export function PlaybackProvider({ children }) {
     });
     return () => { cancelled = true; };
   }, [configureAudioMode, queue]);
-
-  useEffect(() => {
-    let active = true;
-    getLocalLibraryId().then((id) => { if (active) setLibraryId(id); }).catch(() => {});
-    return () => { active = false; };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -331,12 +360,10 @@ export function PlaybackProvider({ children }) {
     onProgress?.({ stage: 'importing', message: 'Adding your music...' });
     const importedTracks = await scanMusicFolder(directory.uri, libraryId);
     const tracksWithArtwork = await addSavedTrackArtwork(libraryId, importedTracks);
-    onProgress?.({ stage: 'transcribing', message: 'Getting lyrics ready...' });
-    const lyricResults = await batchTranscribeTracks(tracksWithArtwork, libraryId, onProgress);
     setTracks(tracksWithArtwork);
     setQueue((current) => current.kind === 'library' ? { tracks: tracksWithArtwork, kind: 'library' } : current);
     setLyricsRevision((revision) => revision + 1);
-    return { folderName: getFolderLabel(directory.uri), trackCount: tracksWithArtwork.length, lyricResults };
+    return { folderName: getFolderLabel(directory.uri), trackCount: tracksWithArtwork.length };
   }, [libraryId]);
 
   const rescanMusicFolder = useCallback(async (onProgress) => {
@@ -344,7 +371,6 @@ export function PlaybackProvider({ children }) {
     onProgress?.({ stage: 'importing', message: 'Checking for songs...' });
     const importedTracks = await scanMusicFolder(musicFolderUri, libraryId);
     const updatedTracks = await addSavedTrackArtwork(libraryId, importedTracks);
-    await batchTranscribeTracks(updatedTracks, libraryId, onProgress);
     setTracks(updatedTracks);
     setQueue((current) => current.kind === 'library' ? { tracks: updatedTracks, kind: 'library' } : current);
     setLyricsRevision((revision) => revision + 1);
@@ -356,11 +382,10 @@ export function PlaybackProvider({ children }) {
     onProgress?.({ stage: 'importing', message: 'Adding your songs...' });
     const importedTracks = await importSelectedAudioFiles(libraryId);
     const updatedTracks = await addSavedTrackArtwork(libraryId, importedTracks);
-    const lyricResults = await batchTranscribeTracks(updatedTracks, libraryId, onProgress);
     setTracks(updatedTracks);
     setQueue((current) => current.kind === 'library' ? { tracks: updatedTracks, kind: 'library' } : current);
     setLyricsRevision((revision) => revision + 1);
-    return { count: importedTracks.length, lyricResults };
+    return { count: importedTracks.length };
   }, [libraryId]);
 
   const finishPreparation = useCallback((playWithoutLyrics = false) => {
@@ -368,7 +393,6 @@ export function PlaybackProvider({ children }) {
     requestNumber.current++;
     preparation.current = null;
     pending?.task?.cancel();
-    setLyricsPreparation(null);
     if (playWithoutLyrics && pending) startQueueNowRef.current?.(...pending.args);
   }, []);
 
@@ -383,7 +407,7 @@ export function PlaybackProvider({ children }) {
     setQueue({ tracks: EMPTY_TRACKS, kind: 'library' });
     setMusicFolderUri(null);
     await clearLocalLibrary(libraryId);
-    await clearAllGeneratedLyrics();
+    await clearLibraryLyrics(libraryId);
     await AsyncStorage.removeItem(musicFolderKey(libraryId));
     await AsyncStorage.removeItem(`music-player.music-folder-owned:${libraryId}`);
     setLyricsRevision((revision) => revision + 1);
@@ -414,6 +438,7 @@ export function PlaybackProvider({ children }) {
     if (!track?.source || !queueTracks.length) return false;
     const index = queueTracks.findIndex((item) => item.id === track.id);
     if (index < 0) return false;
+    try { homeVideoPlayer.pause(); } catch {}
     const token = requestNumber.current;
     hasStartedPlayback.current = true;
     setCurrentTrack(track);
@@ -427,8 +452,13 @@ export function PlaybackProvider({ children }) {
       setQueue({ tracks: queueTracks, kind, recentItem });
       configureAudioMode().then(() => {
         if (token !== requestNumber.current || preparation.current) return;
-        player.skipTo(index);
-        player.play();
+        return activateLockScreenControls(track, queueTracks, recentItem)
+          .catch((error) => console.warn('Could not prepare lock screen controls:', error))
+          .then(() => {
+            if (token !== requestNumber.current || preparation.current) return;
+            player.skipTo(index);
+            player.play();
+          });
       }).catch((error) => {
         console.warn('Could not start playlist playback:', error);
       });
@@ -437,7 +467,7 @@ export function PlaybackProvider({ children }) {
       setQueue({ tracks: queueTracks, kind, recentItem });
     }
     return true;
-  }, [configureAudioMode, libraryId, player, queue]);
+  }, [activateLockScreenControls, configureAudioMode, homeVideoPlayer, libraryId, player, queue]);
 
   useEffect(() => { startQueueNowRef.current = startQueueNow; }, [startQueueNow]);
 
@@ -589,6 +619,12 @@ export function PlaybackProvider({ children }) {
     setQueue({ tracks: EMPTY_TRACKS, kind: 'library' });
   }, [finishPreparation, player]);
 
+  const seekTo = useCallback((seconds) => player.seekTo(seconds), [player]);
+  const playbackTime = useMemo(() => ({
+    currentTime: status.currentTime ?? 0,
+    duration: status.duration ?? 0,
+  }), [status.currentTime, status.duration]);
+
   const value = useMemo(() => ({
     player,
     homeVideoPlayer,
@@ -612,8 +648,6 @@ export function PlaybackProvider({ children }) {
     musicFolderUri,
     musicFolderName: getFolderLabel(musicFolderUri),
     playing: status.playing,
-    currentTime: status.currentTime ?? 0,
-    duration: status.duration ?? 0,
     queueTracks: queue.tracks,
     queueKind: queue.kind,
     playTrack,
@@ -628,22 +662,28 @@ export function PlaybackProvider({ children }) {
     shuffleQueue: toggleShuffle,
     toggleLoopMode,
     stopPlayback,
-    seekTo: (seconds) => player.seekTo(seconds),
+    seekTo,
     queueOpen,
     openQueueSheet,
     closeQueueSheet,
     reorderQueue,
     removeFromQueue,
     addToQueue,
-  }), [homeVideoPlayer, homeVideoName, homeVideoRevision, isCustomHomeVideo, changeHomeVideo, resetHomeVideo, isSpeechActive, setSpeechActive, libraryId, lyricsRevision, addAudioFiles, chooseMusicFolder, clearLibrary, clearTrackArtwork, currentTrack, editTrackArtwork, loopMode, musicFolderUri, player, playQueue, playTrack, recentlyPlayed, rescanMusicFolder, shuffleEnabled, toggleShuffle, toggleLoopMode, queueOpen, openQueueSheet, closeQueueSheet, reorderQueue, removeFromQueue, addToQueue, queue.tracks, queue.kind, skip, status.currentTime, status.duration, status.playing, stopPlayback, togglePlayback, tracks]);
+  }), [homeVideoPlayer, homeVideoName, homeVideoRevision, isCustomHomeVideo, changeHomeVideo, resetHomeVideo, isSpeechActive, setSpeechActive, libraryId, lyricsRevision, addAudioFiles, chooseMusicFolder, clearLibrary, clearTrackArtwork, currentTrack, editTrackArtwork, loopMode, musicFolderUri, player, playQueue, playTrack, recentlyPlayed, rescanMusicFolder, shuffleEnabled, toggleShuffle, toggleLoopMode, queueOpen, openQueueSheet, closeQueueSheet, reorderQueue, removeFromQueue, addToQueue, queue.tracks, queue.kind, skip, status.playing, stopPlayback, togglePlayback, tracks, seekTo]);
 
-  return <PlaybackContext.Provider value={value}>{children}
-    <LyricsPreparationOverlay state={lyricsPreparation} onCancel={() => finishPreparation()} onSkip={() => finishPreparation(true)} />
+  return <PlaybackContext.Provider value={value}>
+    <PlaybackTimeContext.Provider value={playbackTime}>{children}</PlaybackTimeContext.Provider>
   </PlaybackContext.Provider>;
 }
 
 export function usePlayback() {
   const context = useContext(PlaybackContext);
   if (!context) throw new Error('usePlayback must be used inside PlaybackProvider');
+  return context;
+}
+
+export function usePlaybackTime() {
+  const context = useContext(PlaybackTimeContext);
+  if (!context) throw new Error('usePlaybackTime must be used inside PlaybackProvider');
   return context;
 }

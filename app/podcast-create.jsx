@@ -3,18 +3,23 @@ import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollVie
 import ThemeImageBackground from '../components/ThemeImageBackground';
 import { useTheme, useThemeStyles } from '../themes/ThemeProvider';
 import { Ionicons } from '@expo/vector-icons';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getPodcastVideos, savePodcastVideos } from '../components/podcastVideoStorage';
 import { pickAndSavePodcastVideos, deleteVideoFile } from '../components/videoFileService';
-import { buildPodcastEpisodes } from '../components/podcastCollections';
+import { buildPodcastEpisodes, groupPodcastVideos } from '../components/podcastCollections';
 
 export default function CreatePodcastScreen() {
+  const params = useLocalSearchParams();
+  const appendPodcastId = typeof params.podcastId === 'string' ? params.podcastId : null;
+  const appendPodcastTitle = typeof params.podcastTitle === 'string' ? params.podcastTitle : '';
+  const appendPodcastDescription = typeof params.podcastDescription === 'string' ? params.podcastDescription : '';
+  const requestedEpisodeNumber = Math.max(1, Number(params.nextEpisodeNumber) || 1);
   const { theme } = useTheme();
   const { styles, colors: COLORS } = useThemeStyles(createStyles, BASE_COLORS);
   const insets = useSafeAreaInsets();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
+  const [title, setTitle] = useState(appendPodcastTitle);
+  const [description, setDescription] = useState(appendPodcastDescription);
   const [videos, setVideos] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -55,17 +60,43 @@ export default function CreatePodcastScreen() {
   };
   const save = () => {
     if (busyRef.current) return;
-    let episodes;
-    try { episodes = buildPodcastEpisodes(draft.current, { id: `podcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, title, description }); }
-    catch (err) { setError(err.message); return; }
+    if (!draft.current.length) { setError('Choose at least one video.'); return; }
     busyRef.current = true; setBusy(true); setError('');
     operation.current = (async () => {
       try {
         const existing = await getPodcastVideos();
         if (!mounted.current) return;
+        let episodes;
+        let savedPodcastId = null;
+        if (appendPodcastId) {
+          const collection = groupPodcastVideos(existing).find((item) => item.id === appendPodcastId);
+          if (!collection) throw new Error('This podcast section no longer exists. Return to Podcasts and try again.');
+          const nextEpisodeNumber = collection.episodes.reduce(
+            (highest, episode) => Math.max(highest, Number(episode.episodeNumber) || 0),
+            0,
+          ) + 1;
+          savedPodcastId = collection.id;
+          episodes = draft.current.map((video, index) => ({
+            ...video,
+            podcastId: collection.id,
+            podcastTitle: collection.title,
+            podcastDescription: collection.description,
+            episodeNumber: nextEpisodeNumber + index,
+          }));
+        } else {
+          episodes = buildPodcastEpisodes(draft.current, {
+            id: `podcast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            title,
+            description,
+          });
+        }
         await savePodcastVideos([...existing, ...episodes]);
         committed.current = true;
-        if (mounted.current) router.replace('/podcast');
+        if (mounted.current) {
+          router.replace(savedPodcastId
+            ? { pathname: '/podcast', params: { podcastId: savedPodcastId } }
+            : '/podcast');
+        }
       } catch (err) { if (mounted.current) setError(err.message || 'Could not save the podcast.'); }
       finally { busyRef.current = false; if (mounted.current) setBusy(false); }
     })();
@@ -74,28 +105,33 @@ export default function CreatePodcastScreen() {
     <KeyboardAvoidingView style={styles.background} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[styles.header, { paddingTop: insets.top + 16 }]}>
         <Pressable accessibilityRole="button" accessibilityLabel="Cancel new podcast" disabled={busy} onPress={() => router.back()} style={styles.back}><Ionicons name="arrow-back" size={23} color={COLORS.gold} /></Pressable>
-        <View><Text style={styles.heading}>Add podcast</Text><Text style={styles.subtitle}>Your stories, in the right order</Text></View>
+        <View><Text style={styles.heading}>{appendPodcastId ? 'Add episode' : 'Add podcast'}</Text><Text style={styles.subtitle}>{appendPodcastId ? `Adding to ${appendPodcastTitle}` : 'Your stories, in the right order'}</Text></View>
       </View>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 110 }]}>
         <View style={styles.panel}>
-          <Text style={styles.label}>Podcast title</Text>
-          <TextInput accessibilityLabel="Podcast title" value={title} onChangeText={setTitle} editable={!busy} maxLength={150} placeholder="Name your podcast" placeholderTextColor={COLORS.onSurfaceMuted} style={styles.input} />
-          <Text style={styles.label}>Description</Text>
-          <TextInput accessibilityLabel="Podcast description" value={description} onChangeText={setDescription} editable={!busy} maxLength={2000} multiline textAlignVertical="top" placeholder="What is this podcast about?" placeholderTextColor={COLORS.onSurfaceMuted} style={[styles.input, styles.description]} />
+          {appendPodcastId ? <>
+            <Text style={styles.label}>Podcast section</Text>
+            <Text style={styles.sectionName}>{appendPodcastTitle}</Text>
+          </> : <>
+            <Text style={styles.label}>Podcast title</Text>
+            <TextInput accessibilityLabel="Podcast title" value={title} onChangeText={setTitle} editable={!busy} maxLength={150} placeholder="Name your podcast" placeholderTextColor={COLORS.onSurfaceMuted} style={styles.input} />
+            <Text style={styles.label}>Description</Text>
+            <TextInput accessibilityLabel="Podcast description" value={description} onChangeText={setDescription} editable={!busy} maxLength={2000} multiline textAlignVertical="top" placeholder="What is this podcast about?" placeholderTextColor={COLORS.onSurfaceMuted} style={[styles.input, styles.description]} />
+          </>}
         </View>
         <View style={styles.panel}>
           <View style={styles.row}><Ionicons name="film-outline" size={22} color={COLORS.gold} /><Text style={styles.sectionTitle}>Videos · {videos.length}</Text></View>
           <Text style={styles.subtitle}>Choose videos one at a time. Your first selection becomes Episode 1, then Episode 2, and so on.</Text>
           {videos.map((video, index) => <View key={video.id} style={styles.episode}>
-            <View style={styles.number}><Text style={styles.numberText}>{index + 1}</Text></View>
-            <View style={styles.flex}><Text style={styles.episodeTitle}>Episode {index + 1}</Text><Text numberOfLines={2} style={styles.subtitle}>{video.name}</Text></View>
-            <Pressable accessibilityRole="button" accessibilityLabel={`Remove Episode ${index + 1}`} disabled={busy} onPress={() => remove(video)} style={styles.remove}><Ionicons name="close-circle-outline" size={24} color="#a62224" /></Pressable>
+            <View style={styles.number}><Text style={styles.numberText}>{requestedEpisodeNumber + index}</Text></View>
+            <View style={styles.flex}><Text style={styles.episodeTitle}>Episode {requestedEpisodeNumber + index}</Text><Text numberOfLines={2} style={styles.subtitle}>{video.name}</Text></View>
+            <Pressable accessibilityRole="button" accessibilityLabel={`Remove Episode ${requestedEpisodeNumber + index}`} disabled={busy} onPress={() => remove(video)} style={styles.remove}><Ionicons name="close-circle-outline" size={24} color="#a62224" /></Pressable>
           </View>)}
-          <Pressable accessibilityRole="button" disabled={busy} onPress={pickVideo} style={[styles.picker, busy && styles.disabled]}><Ionicons name="add-circle-outline" size={22} color={COLORS.gold} /><Text style={styles.pickerText}>{busy ? 'Please wait…' : `Choose video for Episode ${videos.length + 1}`}</Text></Pressable>
+          <Pressable accessibilityRole="button" disabled={busy} onPress={pickVideo} style={[styles.picker, busy && styles.disabled]}><Ionicons name="add-circle-outline" size={22} color={COLORS.gold} /><Text style={styles.pickerText}>{busy ? 'Please wait…' : `Choose video for Episode ${requestedEpisodeNumber + videos.length}`}</Text></Pressable>
         </View>
         {!!error && <Text accessibilityRole="alert" style={styles.error}>{error}</Text>}
         <Pressable accessibilityRole="button" disabled={busy || !title.trim() || !videos.length} onPress={save} style={[styles.save, (busy || !title.trim() || !videos.length) && styles.disabled]}>
-          {busy ? <ActivityIndicator color={COLORS.cream} /> : <Ionicons name="checkmark-circle-outline" size={23} color={COLORS.cream} />}<Text style={styles.saveText}>Add podcast</Text>
+          {busy ? <ActivityIndicator color={COLORS.cream} /> : <Ionicons name="checkmark-circle-outline" size={23} color={COLORS.cream} />}<Text style={styles.saveText}>{appendPodcastId ? 'Save episode' : 'Add podcast'}</Text>
         </Pressable>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -107,7 +143,7 @@ const createStyles = (colors) => StyleSheet.create({
   back: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.surface, alignItems: 'center', justifyContent: 'center' },
   heading: { fontFamily: 'NunitoExtraBold', fontSize: 25, color: colors.cream }, subtitle: { fontFamily: 'NunitoRegular', fontSize: 13, color: colors.onSurfaceMuted, lineHeight: 20 },
   content: { padding: 18, gap: 18 }, panel: { padding: 18, borderRadius: 22, backgroundColor: colors.surfaceDeep, borderWidth: 1, borderColor: colors.surfaceBorder, gap: 12 },
-  label: { fontFamily: 'NunitoBold', fontSize: 15, color: colors.cream }, input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.surfaceBorder, borderRadius: 12, padding: 13, color: colors.cream, fontSize: 16 }, description: { minHeight: 116 },
+  label: { fontFamily: 'NunitoBold', fontSize: 15, color: colors.cream }, sectionName: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.surfaceBorder, borderRadius: 12, padding: 13, color: colors.cream, fontSize: 16, fontFamily: 'NunitoBold' }, input: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.surfaceBorder, borderRadius: 12, padding: 13, color: colors.cream, fontSize: 16 }, description: { minHeight: 116 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 }, sectionTitle: { color: colors.cream, fontFamily: 'NunitoExtraBold', fontSize: 18 },
   episode: { flexDirection: 'row', alignItems: 'center', gap: 10, borderBottomWidth: 1, borderBottomColor: colors.surfaceBorder, paddingVertical: 10 },
   number: { width: 34, height: 34, borderRadius: 11, backgroundColor: colors.surfaceRaised, alignItems: 'center', justifyContent: 'center' }, numberText: { color: colors.gold, fontFamily: 'NunitoBold' },

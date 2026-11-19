@@ -3,7 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { DEFAULT_THEME_ID, isThemeId, themes, THEME_STORAGE_KEY } from './index';
 
 /** @typedef {keyof typeof themes} ThemeId */
-/** @typedef {{ theme: typeof themes[ThemeId], selectTheme: (id: ThemeId) => Promise<void> }} ThemeContextValue */
+/** @typedef {{ id: string, name: string, description: string, icon: string, colors: Record<string, string>, assets: Record<string, any>, [key: string]: any }} AppTheme */
+/** @typedef {{ theme: AppTheme, selectTheme: (id: ThemeId, color?: string) => Promise<void>, restartAtIntro: boolean }} ThemeContextValue */
 const ThemeContext = createContext(/** @type {ThemeContextValue | null} */ (null));
 
 /** @param {{ children: import('react').ReactNode }} props */
@@ -40,7 +41,7 @@ export function ThemeProvider({ children }) {
     if (saving.current) throw new Error('Please wait for your theme to finish saving.');
     saving.current = true;
     try {
-      const nextColor = id === 'default' && /^#[\da-f]{6}$/i.test(color || '') ? color.toUpperCase() : defaultColor;
+      const nextColor = id === 'default' && /^#[\da-f]{6}$/i.test(color || '') ? (color || '').toUpperCase() : defaultColor;
       await AsyncStorage.setItem(THEME_STORAGE_KEY, JSON.stringify({ id, color: nextColor, restartAtIntro: true }));
       setThemeId(id);
       if (id === 'default') setDefaultColor(nextColor);
@@ -52,12 +53,13 @@ export function ThemeProvider({ children }) {
   const activeThemeId = isThemeId(themeId) && themes[themeId]?.colors
     ? themeId
     : DEFAULT_THEME_ID;
-  const theme = useMemo(() => activeThemeId === 'default' ? {
+  const theme = /** @type {AppTheme} */ (useMemo(() => activeThemeId === 'default' ? {
     ...themes.default,
     colors: (() => {
       const channels = [1, 3, 5].map((index) => parseInt(defaultColor.slice(index, index + 2), 16) / 255).map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
       const luminance = 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
       const foreground = luminance > 0.42 ? '#171717' : '#FFFFFF';
+      /** @param {string} other @param {number} amount */
       const mix = (other, amount) => '#' + [1, 3, 5].map((index) => {
         const baseChannel = parseInt(defaultColor.slice(index, index + 2), 16);
         const otherChannel = parseInt(other.slice(index, index + 2), 16);
@@ -74,7 +76,7 @@ export function ThemeProvider({ children }) {
       };
     })(),
     assets: { ...themes.default.assets, home: null, search: null, library: null, settings: null, collection: null, player: null, chat: null, loadingBackground: null, homeVideoImage: null },
-  } : (themes[activeThemeId]?.colors ? themes[activeThemeId] : themes[DEFAULT_THEME_ID]), [activeThemeId, defaultColor]);
+  } : (themes[activeThemeId]?.colors ? themes[activeThemeId] : themes[DEFAULT_THEME_ID]), [activeThemeId, defaultColor]));
   const value = useMemo(() => ({ theme, selectTheme, restartAtIntro }), [theme, selectTheme, restartAtIntro]);
   // Resolve the saved theme before mounting the intro or creating media players.
   if (!ready) return null;
@@ -90,7 +92,7 @@ export function useTheme() {
 // Christmas keeps its base palette; every other theme maps its semantic colors
 // to the shared screens without recreating styles on every render.
 /**
- * @template T
+ * @template {Record<string, any>} T
  * @param {(colors: Record<string, string>, searchColors: Record<string, string>) => T} createStyles
  * @param {Record<string, string>} defaultColors
  * @param {Record<string, string>} [defaultSearchColors]
@@ -130,7 +132,7 @@ export function useThemeStyles(createStyles, defaultColors, defaultSearchColors)
       aiHue: theme.colors.surface,
     };
     const colors = { ...defaultColors, ...overrides, ...surfaces };
-    const searchColors = { ...defaultSearchColors, ...overrides };
+    const searchColors = { ...(defaultSearchColors || {}), ...overrides };
     const styles = createStyles(colors, searchColors);
     return { colors, searchColors, styles: theme.id === 'default' ? adaptDefaultStyles(styles, theme.colors) : styles };
   }, [theme, createStyles, defaultColors, defaultSearchColors]);
@@ -139,7 +141,14 @@ export function useThemeStyles(createStyles, defaultColors, defaultSearchColors)
 // Older screens contain literal seasonal colors in their StyleSheets. In the
 // plain theme, translate those legacy values to the current adaptive palette so
 // a custom light or dark background keeps every page readable.
+/**
+ * @template {Record<string, any>} T
+ * @param {T} styles
+ * @param {Record<string, string>} colors
+ * @returns {T}
+ */
 function adaptDefaultStyles(styles, colors) {
+  /** @type {Record<string, any>} */
   const adapted = {};
   for (const [name, style] of Object.entries(styles)) {
     if (!style || typeof style !== 'object' || Array.isArray(style)) {
@@ -161,9 +170,10 @@ function adaptDefaultStyles(styles, colors) {
     }
     adapted[name] = next;
   }
-  return adapted;
+  return /** @type {T} */ (adapted);
 }
 
+/** @param {string} color */
 function isTransparentColor(color) {
   return color === 'transparent' || /^rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(color);
 }

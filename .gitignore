@@ -15,7 +15,7 @@ android/app/build/
 
 *.exe
 
-# Large model weights are provisioned on the build machine by npm run lyrics:models.
+# Ignore legacy local model downloads.
 assets/models/*.pte
 assets/models/*.bin
 assets/models/*.part

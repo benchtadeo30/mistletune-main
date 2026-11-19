@@ -384,18 +384,29 @@ export async function chatWithAi(userMessage, tracks, history = [], onToken = nu
 /**
  * Parse the AI response and extract [SONG: ...] recommendations
  */
-export function parseSongRecommendations(text, tracks) {
-  const pattern = /\[(SONG|PODCAST):\s*([^\]]+)\]/gi;
+export function parseSongRecommendations(text, tracks, albums = []) {
+  const pattern = /\[(SONG|PODCAST|ALBUM):\s*([^\]]+)\]/gi;
   const recommendations = [];
   let match;
 
   while ((match = pattern.exec(text)) !== null) {
     const title = match[2].trim();
     const normalizedTitle = title.toLowerCase();
-    const candidates = tracks.filter((track) => match[1].toUpperCase() === 'PODCAST'
+    const type = match[1].toUpperCase().toLowerCase();
+    if (type === 'album') {
+      const album = albums.find((item) => (item.title || '').toLowerCase() === normalizedTitle);
+      recommendations.push({ type, title, album: album || null, track: null });
+      continue;
+    }
+    const candidates = tracks.filter((track) => type === 'podcast'
       ? track.mediaType === 'podcast' : track.mediaType !== 'podcast');
-    const found = candidates.find((track) => (track.title || '').toLowerCase() === normalizedTitle);
-    recommendations.push({ title, track: found || null });
+    const found = candidates.find((track) => {
+      const candidateTitles = [track.title, track.name, track.podcastTitle]
+        .filter(Boolean)
+        .map((value) => String(value).replace(/\.[a-z0-9]{2,5}$/i, '').trim().toLowerCase());
+      return candidateTitles.includes(normalizedTitle);
+    });
+    recommendations.push({ type, title, track: found || null, album: null });
   }
 
   return recommendations;
@@ -405,7 +416,7 @@ export function parseSongRecommendations(text, tracks) {
  * Returns the display text with [SONG:...] tags replaced by placeholders for rendering
  */
 export function formatMessageText(text) {
-  return text.replace(/\[(?:SONG|PODCAST):\s*([^\]]+)\]/gi, '🎵 $1');
+  return text.replace(/\[(?:SONG|PODCAST|ALBUM):\s*([^\]]+)\]/gi, '🎵 $1');
 }
 
 /**

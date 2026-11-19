@@ -43,7 +43,7 @@ test('empty instrumentals are cached; corrupt or overlapping transcripts are rej
   assert.equal(disk.size, 0);
 });
 
-test('legacy generated timing is rejected so a rescan regenerates it', async () => {
+test('outdated generated timing is rejected instead of being displayed', async () => {
   const { cache, track, disk } = fixture();
   const identity = await cache.lyricsCacheIdentity(track, 'library');
   await cache.writeGeneratedLyrics(identity, { segments: [{ start: 1, end: 2, text: 'A' }] });

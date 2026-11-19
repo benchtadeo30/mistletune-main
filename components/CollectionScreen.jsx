@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Animated, PanResponder, Platform, Pressable, ScrollView, StatusBar, StyleSheet, Text, TextInput, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import ThemeVideoBackground from './ThemeVideoBackground';
+import ThemeImageBackground from './ThemeImageBackground';
 import { useTheme } from '../themes/ThemeProvider';
 import { Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -230,9 +230,8 @@ function CollectionContent({ initialAlbumId }) {
   };
 
   return (
-    <View style={styles.background}>
+    <ThemeImageBackground source={theme.assets.collection} contentFit="cover" autoplay style={styles.background}>
       <StatusBar barStyle={isThemed ? 'light-content' : 'dark-content'} />
-      <ThemeVideoBackground />
       <View style={styles.screen}>
         <View style={[styles.header, { paddingTop: insets.top + 42 }]}>
           <Pressable
@@ -436,7 +435,7 @@ function CollectionContent({ initialAlbumId }) {
           <NavItem label="Settings" icon="settings" route="/Settings" theme={theme} />
         </View>
       </View>
-    </View>
+    </ThemeImageBackground>
   );
 }
 

@@ -71,6 +71,22 @@ export default function PodcastScreen() {
   const selectedCollection = collections.find((collection) => collection.id === podcastId);
   const listItems = selectedCollection ? selectedCollection.episodes : collections;
 
+  const addEpisodeToCollection = (collection) => {
+    const nextEpisodeNumber = collection.episodes.reduce(
+      (highest, episode) => Math.max(highest, Number(episode.episodeNumber) || 0),
+      0,
+    ) + 1;
+    router.push({
+      pathname: '/podcast-create',
+      params: {
+        podcastId: collection.id,
+        podcastTitle: collection.title,
+        podcastDescription: collection.description || '',
+        nextEpisodeNumber: String(nextEpisodeNumber),
+      },
+    });
+  };
+
   const handlePlayVideo = (video) => {
     if (playing && stopPlayback) {
       stopPlayback();
@@ -89,6 +105,10 @@ export default function PodcastScreen() {
   const renderCollection = (collection) => <View style={styles.showSection}>
     <View style={styles.showHeading}>
       <Text numberOfLines={2} style={styles.showTitle}>{collection.title}</Text>
+      <Pressable accessibilityRole="button" accessibilityLabel={`Add episode to ${collection.title}`} onPress={() => addEpisodeToCollection(collection)} style={styles.addEpisode}>
+        <Ionicons name="add-circle-outline" size={17} color={COLORS.gold} />
+        <Text style={styles.addEpisodeText}>Add episode</Text>
+      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel={`See all episodes of ${collection.title}`} onPress={() => router.push({ pathname: '/podcast', params: { podcastId: collection.id } })} style={styles.seeAll}>
         <Text style={styles.seeAllText}>See all ({collection.episodes.length})</Text><Ionicons name="chevron-forward" size={16} color={COLORS.gold} />
       </Pressable>
@@ -128,8 +148,8 @@ export default function PodcastScreen() {
           </View>
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Add a podcast"
-            onPress={() => router.push('/podcast-create')}
+            accessibilityLabel={selectedCollection ? `Add episode to ${selectedCollection.title}` : 'Add a podcast'}
+            onPress={() => selectedCollection ? addEpisodeToCollection(selectedCollection) : router.push('/podcast-create')}
             style={styles.headerButton}
           >
             <Ionicons name="add" size={23} color={COLORS.gold} />
@@ -252,6 +272,8 @@ const createStyles = (COLORS) => StyleSheet.create({
   showSection: { backgroundColor: COLORS.surfaceDeep, borderWidth: 1, borderColor: COLORS.surfaceBorder, borderRadius: 18, overflow: 'hidden', paddingBottom: 14 },
   showHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, gap: 8 },
   showTitle: { flex: 1, color: COLORS.gold, fontFamily: 'NunitoExtraBold', fontSize: 17 },
+  addEpisode: { minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 3, paddingHorizontal: 4 },
+  addEpisodeText: { color: COLORS.gold, fontFamily: 'NunitoBold', fontSize: 12 },
   episodePreview: { paddingHorizontal: 12, alignItems: 'flex-start' },
   collectionHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 14, backgroundColor: COLORS.surfaceDeep },
   collectionLabel: { color: COLORS.gold, fontFamily: 'NunitoExtraBold', fontSize: 18 },

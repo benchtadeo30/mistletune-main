@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme, useThemeStyles } from '../themes/ThemeProvider';
 import { usePlayback } from '../components/PlaybackContext';
+import { useFavorites } from '../components/FavoritesContext';
 import SongArtwork from '../components/SongArtwork';
 import { buildAlbums } from '../components/albumLibrary';
 import { getUserAlbums } from '../components/userAlbums';
@@ -42,7 +43,7 @@ const HOME_CARD_HEIGHT = 104;
 
 const ALPHABET_LETTERS = ['All', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''), '#'];
 
-function HomeVideo({ player, playing }) {
+function HomeVideo({ player, musicSelected }) {
   const { styles } = useThemeStyles(createStyles, BASE_COLORS);
   const { theme } = useTheme();
   const { homeVideoName, homeVideoRevision, isCustomHomeVideo, changeHomeVideo, resetHomeVideo, isSpeechActive } = usePlayback();
@@ -72,17 +73,18 @@ function HomeVideo({ player, playing }) {
   const [controlsVisible, setControlsVisible] = useState(false);
   const [controlsOpacity] = useState(() => new Animated.Value(0));
   const controlsTimer = useRef(null);
+  const controlsVisibleRef = useRef(false);
   const [videoTime, setVideoTime] = useState(() => player.currentTime || 0);
   const [videoDuration, setVideoDuration] = useState(() => Number.isFinite(player.duration) ? player.duration : 0);
   const [progressWidth, setProgressWidth] = useState(0);
 
   useEffect(() => {
     const timeSubscription = player.addListener('timeUpdate', ({ currentTime }) => {
-      setVideoTime(currentTime);
+      if (controlsVisibleRef.current) setVideoTime(currentTime);
     });
     const sourceSubscription = player.addListener('sourceLoad', ({ duration }) => {
       setVideoDuration(Number.isFinite(duration) ? duration : 0);
-      setVideoTime(player.currentTime || 0);
+      if (controlsVisibleRef.current) setVideoTime(player.currentTime || 0);
       Reflect.set(player, 'loop', true);
     });
 
@@ -99,16 +101,18 @@ function HomeVideo({ player, playing }) {
   // The provider owns the player, so its position already survives navigation.
   // A source revision also catches two picked videos with the same filename.
   useEffect(() => {
-    if (isFocused && hasVideo && !playing && !isSpeechActive) {
+    const videoShouldPlay = isFocused && hasVideo && !musicSelected && !isSpeechActive;
+    Reflect.set(player, 'showNowPlayingNotification', false);
+    if (videoShouldPlay) {
       player.play();
     } else {
       player.pause();
     }
-  }, [isFocused, playing, isSpeechActive, player, hasVideo, homeVideoRevision]);
+  }, [isFocused, musicSelected, isSpeechActive, player, hasVideo, homeVideoRevision]);
 
   useEffect(() => () => {
     clearTimeout(controlsTimer.current);
-    player.pause();
+    controlsVisibleRef.current = false;
   }, [player]);
 
   const handleChangeHomeVideo = async () => {
@@ -136,6 +140,7 @@ function HomeVideo({ player, playing }) {
   };
 
   const showControls = () => {
+    controlsVisibleRef.current = true;
     setVideoTime(hasVideo ? player.currentTime || 0 : 0);
     setVideoDuration(hasVideo && Number.isFinite(player.duration) ? player.duration : 0);
     controlsOpacity.stopAnimation();
@@ -144,7 +149,10 @@ function HomeVideo({ player, playing }) {
     clearTimeout(controlsTimer.current);
     controlsTimer.current = setTimeout(() => {
       Animated.timing(controlsOpacity, { toValue: 0, duration: 500, useNativeDriver: true }).start(({ finished }) => {
-        if (finished) setControlsVisible(false);
+        if (finished) {
+          controlsVisibleRef.current = false;
+          setControlsVisible(false);
+        }
       });
     }, 4000);
   };
@@ -261,7 +269,8 @@ export default function Music() {
   const [hiddenAlbumIds, setHiddenAlbumIds] = useState([]);
   const [artistCovers, setArtistCovers] = useState({});
   const [podcastVideos, setPodcastVideos] = useState([]);
-  const { currentTrack, homeVideoPlayer, libraryId, playTrack, playQueue, recentlyPlayed, tracks, playing } = usePlayback();
+  const { currentTrack, homeVideoPlayer, libraryId, playTrack, playQueue, playing, recentlyPlayed, tracks } = usePlayback();
+  const { favoriteTrackIds } = useFavorites();
 
   useEffect(() => {
     let active = true;
@@ -318,6 +327,10 @@ export default function Music() {
     const songCount = entry.trackIds.length;
     return { key: `album:${entry.id}`, title: entry.title, subtitle: `Playlist ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ${songCount} song${songCount === 1 ? '' : 's'}`, image: entry.artworkUri ? { uri: entry.artworkUri } : null, album: entry };
   }).filter(Boolean), [recentlyPlayed, tracks]);
+
+  const favoriteSongs = useMemo(() => favoriteTrackIds
+    .map((id) => tracks.find((track) => track.id === id))
+    .filter((track) => track?.source), [favoriteTrackIds, tracks]);
 
   const sortedSongs = useMemo(() => {
     return [...tracks]
@@ -376,7 +389,7 @@ export default function Music() {
         >
           
                    <FadeInUp distance={30} duration={600}>
-            {Platform.OS !== 'web' ? <HomeVideo key="home-video-player" player={homeVideoPlayer} playing={playing} /> : null}
+            {Platform.OS !== 'web' ? <HomeVideo key="home-video-player" player={homeVideoPlayer} musicSelected={Boolean(currentTrack) || playing} /> : null}
           </FadeInUp>
 
           <FadeInUp delay={150}>
@@ -467,6 +480,35 @@ export default function Music() {
               </View>
             )}
           </FadeInUp>
+
+          {favoriteSongs.length ? (
+            <FadeInUp delay={400}>
+              <View style={[styles.sectionHeading, styles.artistCollectionsHeading]}>
+                <View style={styles.headingTitleRow}>
+                  <Text style={styles.sectionTitle}>Favorites</Text>
+                  <Ionicons name="heart" style={styles.headingSnowflake} />
+                </View>
+                <Pressable accessibilityRole="button" accessibilityLabel="See all favorite music" onPress={() => router.push({ pathname: '/Library', params: { category: 'Favorites' } })} hitSlop={8}>
+                  <View style={styles.seeAllRow}><Text style={styles.seeAll}>See all</Text><Ionicons name="chevron-forward" size={14} color={COLORS.gold} /></View>
+                </Pressable>
+              </View>
+              <ScrollView horizontal style={styles.recentScroll} showsHorizontalScrollIndicator={false} contentContainerStyle={styles.recentRow}>
+                {favoriteSongs.map((track) => (
+                  <PressableScale key={track.id} accessibilityRole="button" accessibilityLabel={`Play favorite ${track.title} by ${track.artist || 'Unknown artist'}`} onPress={() => {
+                    playTrack(track);
+                    router.push('/Player');
+                  }} style={styles.albumCard}>
+                    <View>
+                      <SongArtwork source={track.artwork} style={styles.albumArt} />
+                      <View style={styles.favoriteBadge}><Ionicons name="heart" size={13} color="#fff8e9" /></View>
+                    </View>
+                    <Text numberOfLines={1} style={[styles.albumTitle, theme.id === 'valentines' && { color: theme.colors.primary }]}>{track.title}</Text>
+                    <Text numberOfLines={1} style={[styles.albumSubtitle, theme.id === 'valentines' && { color: theme.colors.muted }]}>{track.artist || 'Unknown artist'}</Text>
+                  </PressableScale>
+                ))}
+              </ScrollView>
+            </FadeInUp>
+          ) : null}
 
           {artistCollections.length ? (
             <>
@@ -836,6 +878,7 @@ const createStyles = (COLORS) => StyleSheet.create({
   recentRow: { flexDirection: 'row', gap: 11 },
   albumCard: { width: HOME_CARD_WIDTH },
   albumArt: { width: HOME_CARD_WIDTH, height: HOME_CARD_HEIGHT, borderRadius: 13, borderWidth: 2, borderColor: COLORS.gold, backgroundColor: COLORS.green },
+  favoriteBadge: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: COLORS.red, borderWidth: 1, borderColor: COLORS.gold },
   albumTitle: { color: COLORS.cream, fontFamily: 'NunitoExtraBold', fontSize: 13, marginTop: 6, textShadowColor: 'rgba(0,0,0,0.55)', textShadowRadius: 4 },
   albumSubtitle: { color: COLORS.gold, fontFamily: 'NunitoSemiBold', fontSize: 12 },
   recentEmpty: { minHeight: 55, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 9, paddingHorizontal: 16, borderRadius: 12, borderWidth: 1, borderColor: COLORS.gold, backgroundColor: COLORS.surface },

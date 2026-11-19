@@ -88,9 +88,28 @@ function normalize(text) {
   return String(text || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
-const STOP_WORDS = new Set('i me my our the a an all every entire whole local library collection music song songs track tracks podcast podcasts video videos episode episodes please can could you show list give find search play recommend suggest want listen to for of in on from by have do what are is some any with and also how many total number'.split(' '));
+function podcastItemTitle(item) {
+  const rawTitle = item.title || item.name || item.podcastTitle || 'Untitled podcast';
+  return String(rawTitle).replace(/\.[a-z0-9]{2,5}$/i, '').trim() || 'Untitled podcast';
+}
+const STOP_WORDS = new Set('i me my our the a an all every entire whole local library collection music song songs track tracks podcast podcasts video videos episode episodes album albums record records playlist playlists artist artists please can could you show list give find search play recommend suggest want listen to for of in on from by have do what are is some any with and also how many total number'.split(' '));
 function containsPhrase(text, phrase) {
   return phrase && (' ' + text + ' ').includes(' ' + phrase + ' ');
+}
+
+function makeAlbumCatalog(tracks, albums) {
+  if (Array.isArray(albums) && albums.length) return albums.filter((album) => album?.title);
+  const grouped = new Map();
+  for (const track of tracks) {
+    const title = String(track.album || '').trim();
+    if (!title || title.toLowerCase() === 'singles') continue;
+    const artist = String(track.albumArtist || track.artist || '').trim();
+    const key = `${normalize(title)}\u0000${normalize(artist)}`;
+    const album = grouped.get(key) || { id: key, title, artist, tracks: [] };
+    album.tracks.push(track);
+    grouped.set(key, album);
+  }
+  return [...grouped.values()];
 }
 
 function requestedTitle(message) {
@@ -103,7 +122,7 @@ function requestedTitle(message) {
 }
 
 /** Resolve requests against the complete local catalog, without inventing metadata. */
-export async function chatWithNlp(userMessage, tracks = [], onToken = null, podcasts = [], history = []) {
+export async function chatWithNlp(userMessage, tracks = [], onToken = null, podcasts = [], history = [], albums = []) {
   let query = normalize(userMessage);
   // Follow-up requests such as "show all of them" retain the previous subject.
   if (/^(show |list |give me )?(all|more)( of them)?$/.test(query)) {
@@ -113,9 +132,51 @@ export async function chatWithNlp(userMessage, tracks = [], onToken = null, podc
   const wantsPodcasts = /\b(podcasts?|videos?|episodes?)\b/.test(query);
   const wantsMusic = /\b(music|songs?|tracks?)\b/.test(query);
   const both = wantsPodcasts && wantsMusic;
+  const albumCatalog = makeAlbumCatalog(tracks, albums);
+  const asksAlbums = /\b(albums?|records?|playlists?)\b/.test(query);
+  const asksToPlay = /\b(play|start|listen)\b/.test(query);
+  if (asksAlbums) {
+    const namedAlbums = albumCatalog.filter((album) => containsPhrase(query, normalize(album.title)));
+    const artistNames = [...new Set(albumCatalog.map((album) => normalize(album.artist)).filter((artist) =>
+      artist && artist !== 'unknown artist' && containsPhrase(query, artist)))];
+    const matchingAlbums = namedAlbums.length
+      ? namedAlbums
+      : artistNames.length ? albumCatalog.filter((album) => artistNames.includes(normalize(album.artist))) : albumCatalog;
+    const countOnly = /\b(how many|count|total|number of)\b/.test(query);
+    const songListRequest = !asksToPlay && /\b(show|list|which|what).*(songs?|tracks?)\b|\b(songs?|tracks?)\s+(?:in|from)\b/.test(query);
+    let albumReply;
+    if (!albumCatalog.length) {
+      albumReply = 'There are no albums in your music library yet.';
+    } else if (countOnly) {
+      albumReply = `Your library has ${matchingAlbums.length} matching albums.`;
+    } else if (asksToPlay && namedAlbums.length) {
+      const selected = namedAlbums.slice(0, 5);
+      albumReply = selected.length === 1
+        ? `Tap this album to play it: [ALBUM: ${selected[0].title}]`
+        : `Choose an album to play:\n\n${selected.map((album) => `[ALBUM: ${album.title}] by ${album.artist || 'Unknown artist'}`).join('\n')}`;
+    } else if (songListRequest && namedAlbums.length) {
+      const albumTracks = namedAlbums.flatMap((album) => album.tracks || []);
+      albumReply = albumTracks.length
+        ? `Songs in ${namedAlbums.map((album) => album.title).join(', ')}:\n\n${albumTracks.slice(0, 30).map((track) => `[SONG: ${track.title}] by ${track.artist || 'Unknown artist'}`).join('\n')}`
+        : `I couldn't find songs in ${namedAlbums.map((album) => album.title).join(', ')}.`;
+    } else {
+      const selected = matchingAlbums.slice(0, 30);
+      albumReply = selected.length
+        ? `Your albums:\n\n${selected.map((album) => `[ALBUM: ${album.title}] by ${album.artist || 'Unknown artist'} (${(album.tracks || []).length} songs)`).join('\n')}`
+        : 'I couldn’t find a matching album in your library.';
+    }
+    onToken?.(albumReply);
+    return albumReply;
+  }
   const catalog = [
     ...(!wantsPodcasts || both ? tracks.map((item) => ({ ...item, kind: 'song' })) : []),
-    ...(wantsPodcasts ? podcasts.map((item) => ({ ...item, kind: 'podcast' })) : []),
+    ...(wantsPodcasts ? podcasts.map((item) => ({
+      ...item,
+      title: podcastItemTitle(item),
+      artist: item.artist || item.author || item.podcastTitle || '',
+      description: item.description || item.podcastDescription || '',
+      kind: 'podcast',
+    })) : []),
   ];
   const all = /\b(all|every|entire|whole)\b/.test(query);
   const countOnly = /\b(how many|count|total|number of)\b/.test(query);
@@ -124,14 +185,15 @@ export async function chatWithNlp(userMessage, tracks = [], onToken = null, podc
   const terms = query.split(' ').filter((term) => term && !STOP_WORDS.has(term) && !/^\d+$/.test(term));
   const moods = Object.values(MOOD_TAXONOMY).filter((mood) =>
     mood.keywords.some((keyword) => containsPhrase(query, normalize(keyword))));
-  const fields = (item) => [item.title, item.artist, item.album, item.genre, item.description, item.author].map(normalize);
+  const fields = (item) => [item.title, item.artist, item.album, item.genre, item.description,
+    item.author, item.name, item.podcastTitle, item.podcastDescription].map(normalize);
   const artists = [...new Set(catalog.map((item) => normalize(item.artist)).filter((artist) =>
     artist && artist !== 'unknown artist' && containsPhrase(query, artist)))];
-  const albums = [...new Set(catalog.map((item) => normalize(item.album)).filter((album) =>
+  const matchingAlbumNames = [...new Set(catalog.map((item) => normalize(item.album)).filter((album) =>
     album && album !== 'unknown album' && containsPhrase(query, album)))];
   let matches = catalog.filter((item) => {
     if (artists.length && !artists.includes(normalize(item.artist))) return false;
-    if (albums.length && !albums.includes(normalize(item.album))) return false;
+    if (matchingAlbumNames.length && !matchingAlbumNames.includes(normalize(item.album))) return false;
     return true;
   });
   const titleQuery = requestedTitle(userMessage);
@@ -147,8 +209,8 @@ export async function chatWithNlp(userMessage, tracks = [], onToken = null, podc
   const directTitles = exactTitles.length ? exactTitles : mentionedTitles.filter((item) => normalize(item.title).length === longestTitle);
   const broadRequest = /\b(recommend|suggest|mood|feel|feeling)\b/.test(query) ||
     /\b(happy|sad|chill|relaxing|romantic|workout|christmas|calm|upbeat)\s+(music|songs|tracks)\b/.test(query);
-  const specificTitle = !all && !countOnly && !broadRequest &&
-    (!artists.length && !albums.length || /\b(play|called|titled)\b/.test(query));
+  const specificTitle = !all && !countOnly && !broadRequest && !artists.length &&
+    (!artists.length && !matchingAlbumNames.length || /\b(play|called|titled)\b/.test(query));
   if (directTitles.length && !all && !countOnly && !broadRequest) {
     matches = directTitles;
   } else if (specificTitle && titleQuery && !wantsPodcasts) {
@@ -156,7 +218,7 @@ export async function chatWithNlp(userMessage, tracks = [], onToken = null, podc
     const titleTerms = titleQuery.split(' ').filter((word) => !STOP_WORDS.has(word));
     matches = titleTerms.length ? matches.filter((item) =>
       titleTerms.every((word) => containsPhrase(normalize(item.title), word))) : [];
-  } else if (!artists.length && !albums.length && terms.length) {
+  } else if (!artists.length && !matchingAlbumNames.length && terms.length) {
     matches = matches.map((item) => {
       const metadata = fields(item);
       const overlap = terms.reduce((score, term) => score + metadata.reduce((sum, field, index) =>
@@ -179,10 +241,10 @@ export async function chatWithNlp(userMessage, tracks = [], onToken = null, podc
     reply = "Your library has " + matches.length + " matching " + label + ".";
   } else {
     const selected = matches.slice(0, limit);
-    const filtered = artists.length || albums.length || terms.length;
+    const filtered = artists.length || matchingAlbumNames.length || terms.length;
     reply = "Showing " + selected.length + " of " + matches.length + (filtered ? " matching " : " ") + label + ":\n\n" +
       selected.map((item, index) => (index + 1) + ". [" + (item.kind === 'podcast' ? 'PODCAST' : 'SONG') +
-        ": " + item.title + "]" + (item.artist || item.author ? " by " + (item.artist || item.author) : '') +
+        ": " + (item.title || 'Untitled') + "]" + (item.artist || item.author ? " by " + (item.artist || item.author) : '') +
         (item.album ? " (" + item.album + ")" : '')).join('\n');
     if (moods.length) reply += "\n\nThese matches use your library's titles and metadata.";
   }

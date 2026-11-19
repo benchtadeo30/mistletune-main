@@ -4,8 +4,9 @@ import Animated, { interpolateColor, runOnJS, useAnimatedReaction, useAnimatedSt
 import { useKaraokeClock } from './useKaraokeClock';
 import { DEFAULT_SYNC_OFFSET_MS, LOOKAHEAD_MS, lyricTapPositionMs, visibleLyricLine } from './karaokeTiming';
 import { useThemeStyles } from '../themes/ThemeProvider';
+import LyricsAttribution from './LyricsAttribution';
 
-export default function SyncedLyricsView({ segments, player, currentTime = 0, previewPosition = null, syncOffset = DEFAULT_SYNC_OFFSET_MS, onSeek }) {
+export default function SyncedLyricsView({ segments, player, currentTime = 0, previewPosition = null, syncOffset = DEFAULT_SYNC_OFFSET_MS, onSeek, attribution }) {
   const { styles } = useThemeStyles(createStyles, BASE_COLORS);
   const scroll = useRef(null);
   const offsets = useRef({});
@@ -100,6 +101,7 @@ export default function SyncedLyricsView({ segments, player, currentTime = 0, pr
             recordOffset={recordOffset}
           />
         ))}
+        <LyricsAttribution attribution={attribution} />
         <View onLayout={() => setLayoutRevision((r) => r + 1)} />
       </ScrollView>
       {!following && (
@@ -146,19 +148,17 @@ const SegmentRow = memo(function SegmentRow({
     >
       {segment.words?.length ? (
         <View style={styles.words} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-          {groupWords(segment.words).map((chunk, chunkIndex, chunks) => {
-            const nextChunk = chunks[chunkIndex + 1];
-            const label = chunk.map((word) => word.word.trim()).join(' ');
+          {segment.words.map((word, wordIndex) => {
+            const label = word.word.trim();
             return animate ? (
-              <GoldChunkWord
-                key={chunkIndex}
-                chunk={chunk}
-                nextChunk={nextChunk}
+              <GoldWord
+                key={wordIndex}
+                word={word}
                 effectiveTimeMs={effectiveTimeMs}
                 reducedMotion={reducedMotion}
               />
             ) : (
-              <View key={chunkIndex} style={styles.chip}>
+              <View key={wordIndex} style={styles.chip}>
                 <Text style={isPast ? styles.chipTextPast : styles.chipTextStatic}>
                   {label}
                 </Text>
@@ -175,36 +175,14 @@ const SegmentRow = memo(function SegmentRow({
   );
 });
 
-// ── Chunking: highlight two-or-more words at a time ─────────────────────
-// Singing word-by-word is frantic and exposes ASR timing jitter. Group words
-// into pairs; an odd trailing word joins the previous chunk (3-word unit), so
-// every unit holds at least two words unless the line has exactly one.
-function groupWords(words) {
-  const chunks = [];
-  let current = [];
-  for (const word of words) {
-    current.push(word);
-    if (current.length === 2) {
-      chunks.push(current);
-      current = [];
-    }
-  }
-  if (current.length === 1 && chunks.length > 0) {
-    chunks[chunks.length - 1] = [...chunks[chunks.length - 1], ...current];
-  } else if (current.length > 0) {
-    chunks.push(current);
-  }
-  return chunks;
-}
 
-// ── Gold chip active chunk highlighting with an animated transition ─────────
-function GoldChunkWord({ chunk, effectiveTimeMs, reducedMotion }) {
+// Highlight each word at its own timestamps.
+function GoldWord({ word, effectiveTimeMs, reducedMotion }) {
   const { styles, colors } = useThemeStyles(createStyles, BASE_COLORS);
   const moss = colors.moss;
-  const startMs = chunk[0].start * 1000;
-  const chunkEndMs = chunk[chunk.length - 1].end * 1000;
+  const startMs = word.start * 1000;
   // End highlights at the measured vocal boundary, including instrumental gaps.
-  const endMs = chunkEndMs;
+  const endMs = word.end * 1000;
 
   // 0..1 activation, driven by crossing the start/end thresholds — springs in,
   // fades out — instead of the chip snapping between states every word.
@@ -226,7 +204,7 @@ function GoldChunkWord({ chunk, effectiveTimeMs, reducedMotion }) {
     },
   );
 
-  const label = chunk.map((word) => word.word.trim()).join(' ');
+  const label = word.word.trim();
 
   const animatedChipStyle = useAnimatedStyle(() => ({
     backgroundColor: interpolateColor(pop.value, [0, 1], ['rgba(244, 214, 131, 0)', '#f4d683']),

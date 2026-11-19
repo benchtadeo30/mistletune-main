@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Animated,
@@ -34,6 +34,8 @@ import {
 
 import { chatWithNlp } from './nlpService';
 import { getPodcastVideos } from './podcastVideoStorage';
+import { buildAlbums } from './albumLibrary';
+import { getUserAlbums } from './userAlbums';
 
 import { useTheme, useThemeStyles } from '../themes/ThemeProvider';
 
@@ -102,25 +104,29 @@ const typingStyles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4 },
 });
 
-function SongChip({ title, track, onPress }) {
+function SongChip({ recommendation, onPress }) {
   const { styles, colors: COLORS } = useThemeStyles(createStyles, BASE_COLORS);
+  const { type, title, track, album } = recommendation;
+  const playable = type === 'album' ? Boolean(album?.tracks?.length || album?.trackIds?.length) : Boolean(track);
+  const icon = type === 'podcast' ? 'videocam' : type === 'album' ? 'albums' : 'musical-note';
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Search and play ${title}`}
-      onPress={() => onPress(title, track)}
-      style={({ pressed }) => [styles.songChip, pressed && styles.songChipPressed, !track && styles.songChipDisabled]}
+      accessibilityLabel={`${type === 'podcast' ? 'Open' : 'Play'} ${title}`}
+      disabled={!playable}
+      onPress={() => onPress(recommendation)}
+      style={({ pressed }) => [styles.songChip, pressed && styles.songChipPressed, !playable && styles.songChipDisabled]}
     >
-      <Ionicons name="musical-note" size={12} color={track ? COLORS.gold : COLORS.onSurfaceMuted} />
-      <Text numberOfLines={1} style={[styles.songChipText, !track && styles.songChipTextDisabled]}>
+      <Ionicons name={icon} size={12} color={playable ? COLORS.gold : COLORS.onSurfaceMuted} />
+      <Text numberOfLines={1} style={[styles.songChipText, !playable && styles.songChipTextDisabled]}>
         {title}
       </Text>
-      {track ? <Ionicons name="play-circle" size={14} color={COLORS.gold} /> : null}
+      {playable ? <Ionicons name="play-circle" size={14} color={COLORS.gold} /> : null}
     </Pressable>
   );
 }
 
-function ChatMessage({ message, tracks, onSongPress, onSpeak, isSpeakingMessage }) {
+function ChatMessage({ message, tracks, albums, onSongPress, onSpeak, isSpeakingMessage }) {
   const { styles, colors: COLORS } = useThemeStyles(createStyles, BASE_COLORS);
   const isUser = message.role === 'user';
   const isAI = message.role === 'assistant';
@@ -148,8 +154,10 @@ function ChatMessage({ message, tracks, onSongPress, onSpeak, isSpeakingMessage 
     );
   }
 
-  const recommendations = isAI ? parseSongRecommendations(message.content, tracks) : [];
-  const displayText = isAI ? formatMessageText(message.content) : message.content;
+  const recommendations = isAI ? parseSongRecommendations(message.content, tracks, albums) : [];
+  const displayText = isAI
+    ? formatMessageText(message.content).replace(/\[ALBUM:\s*([^\]]+)\]/gi, '$1')
+    : message.content;
 
   return (
     <View style={[styles.msgRow, isUser && styles.msgRowUser]}>
@@ -167,8 +175,7 @@ function ChatMessage({ message, tracks, onSongPress, onSpeak, isSpeakingMessage 
             {recommendations.map((rec, i) => (
               <SongChip
                 key={i}
-                title={rec.title}
-                track={rec.track}
+                recommendation={rec}
                 onPress={onSongPress}
               />
             ))}
@@ -237,6 +244,7 @@ export default function ChatBot() {
   const [renameText, setRenameText] = useState('');
   const ttsVoice = 'female';
   const [podcasts, setPodcasts] = useState([]);
+  const [userAlbums, setUserAlbums] = useState([]);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState(null);
   // Speech recognition state
@@ -247,7 +255,29 @@ export default function ChatBot() {
   const scrollRef = useRef(null);
     const inputRef = useRef(null);
     const insets = useSafeAreaInsets();
-    const { tracks, setSpeechActive } = usePlayback();
+  const { tracks, libraryId, setSpeechActive, playTrack, playQueue } = usePlayback();
+  const albums = useMemo(() => {
+    const libraryAlbums = buildAlbums(tracks);
+    const customAlbums = userAlbums.map((album) => ({
+      ...album,
+      isUserAlbum: true,
+      tracks: (album.trackIds || album.tracks?.map((track) => track.id) || [])
+        .map((id) => tracks.find((track) => track.id === id))
+        .filter((track) => track?.source),
+    }));
+    return [...customAlbums, ...libraryAlbums];
+  }, [tracks, userAlbums]);
+
+  useEffect(() => {
+    let active = true;
+    getUserAlbums(libraryId).then((saved) => {
+      if (active) setUserAlbums(saved);
+    });
+    getPodcastVideos().then((saved) => {
+      if (active) setPodcasts(saved);
+    });
+    return () => { active = false; };
+  }, [libraryId]);
 
   const [pulse] = useState(() => new Animated.Value(1));
 
@@ -315,7 +345,7 @@ export default function ChatBot() {
   const speakReply = useCallback((text, messageId = null) => {
     if (!text) return;
     const clean = text
-      .replace(/\[(?:SONG|PODCAST):[^\]]+\]/gi, '')
+      .replace(/\[(?:SONG|PODCAST|ALBUM):[^\]]+\]/gi, '')
       .replace(/🎵[^\n]*/g, '')
       .replace(/[*_~`#>]+/g, '')
       .replace(/\n{2,}/g, '. ')
@@ -686,7 +716,7 @@ export default function ChatBot() {
           return updated;
         });
         scrollToBottom();
-      }, podcastLibrary, libraryHistory);
+      }, podcastLibrary, libraryHistory, albums);
 
       // Persist assistant message
       await addMessageToSession(currentSession.id, 'assistant', fullReply);
@@ -708,7 +738,7 @@ export default function ChatBot() {
       setIsTyping(false);
       scrollToBottom();
     }
-  }, [input, isTyping, currentSession, messages, tracks, scrollToBottom, stopSpeaking, isListening, stopListening]);
+  }, [input, isTyping, currentSession, messages, tracks, albums, scrollToBottom, stopSpeaking, isListening, stopListening]);
 
   useEffect(() => {
     if (!voiceMessage) return;
@@ -719,14 +749,37 @@ export default function ChatBot() {
     return () => clearTimeout(timer);
   }, [voiceMessage, visible, isTyping, currentSession, sendMessage]);
 
-  // Click on a song card: redirects to Search page with song query and auto-plays
-  const handleSongPress = useCallback((title, track) => {
+  const handleRecommendationPress = useCallback((recommendation) => {
+    const { title, track, album, type } = recommendation;
     stopSpeaking();
     stopListening();
     setSpeechActive?.(false);
-    if (track?.mediaType === 'podcast') {
+    if (type === 'album' && album) {
+      const albumTracks = (album.tracks || album.trackIds?.map((id) => tracks.find((item) => item.id === id)) || [])
+        .filter((item) => item?.source);
+      if (!albumTracks.length) {
+        Alert.alert('No songs in this album', 'Add songs to the album, then try again.');
+        return;
+      }
+      const trackIds = album.trackIds ?? albumTracks.map((item) => item.id);
+      const started = playQueue(albumTracks, albumTracks[0], {
+        type: 'album', id: album.id, title: album.title, artworkUri: album.artworkUri, trackIds,
+      });
+      if (!started) return;
+      setVisible(false);
+      router.push('/Player');
+      return;
+    }
+    if (type === 'podcast' || track?.mediaType === 'podcast') {
+      if (!track?.id) return;
       setVisible(false);
       router.push({ pathname: '/podcast', params: { videoId: track.id } });
+      return;
+    }
+    if (track?.source) {
+      if (!playTrack(track)) return;
+      setVisible(false);
+      router.push('/Player');
       return;
     }
     const songQuery = track?.title || title;
@@ -740,7 +793,7 @@ export default function ChatBot() {
         requestId: Date.now().toString(),
       },
     });
-  }, [stopSpeaking, stopListening, setSpeechActive]);
+  }, [stopSpeaking, stopListening, setSpeechActive, tracks, playTrack, playQueue]);
 
   const closeChat = useCallback(() => {
     stopSpeaking();
@@ -851,7 +904,8 @@ export default function ChatBot() {
                   key={msg.id || i}
                   message={msg}
                   tracks={[...tracks, ...podcasts.map((video) => ({ ...video, mediaType: 'podcast' }))]}
-                  onSongPress={handleSongPress}
+                  albums={albums}
+                  onSongPress={handleRecommendationPress}
                   onSpeak={handleToggleSpeak}
                   isSpeakingMessage={isSpeaking && speakingMessageId === (msg.id || msg.content)}
                 />

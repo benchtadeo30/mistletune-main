@@ -2,7 +2,7 @@ const { getDefaultConfig } = require('expo/metro-config');
 
 const config = getDefaultConfig(__dirname);
 
-// Exclude server virtual environments and cache directories
+// Exclude legacy server virtual environments and cache directories
 const existingBlockList = config.resolver.blockList;
 
 config.resolver.blockList = [
@@ -11,7 +11,6 @@ config.resolver.blockList = [
     : existingBlockList
       ? [existingBlockList]
       : []),
-  /[/\\]server[/\\]\.(?:venv|cache)[/\\].*/,
 ];
 
 // SVG transformer for Expo

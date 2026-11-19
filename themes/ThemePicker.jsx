@@ -23,6 +23,7 @@ export default function ThemePicker({ onClose }) {
   const busy = useRef(false);
   const insets = useSafeAreaInsets();
   const selectionColor = getContrastColor(theme.colors.primary);
+  /** @param {string} next */
   const updateColor = (next) => { setColor(next); setHex(next); };
   const apply = async () => {
     if (busy.current) return;
@@ -91,7 +92,7 @@ export default function ThemePicker({ onClose }) {
                 <Ionicons name="color-palette-outline" size={20} color="#543e70" />
               </Pressable>
               <Text style={styles.label}>Hex color</Text>
-              <TextInput accessibilityLabel="Custom background hex color" value={hex} editable={!saving} maxLength={7} autoCapitalize="characters" autoCorrect={false} placeholder="#182230" style={styles.colorInput} onChangeText={(value) => { setHex(value); if (/^#[\da-f]{6}$/i.test(value)) setColor(value.toUpperCase()); }} />
+              <TextInput accessibilityLabel="Custom background hex color" value={hex} editable={!saving} maxLength={7} autoCapitalize="characters" autoCorrect={false} placeholder="#182230" style={styles.colorInput} onChangeText={/** @param {string} value */ (value) => { setHex(value); if (/^#[\da-f]{6}$/i.test(value)) setColor(value.toUpperCase()); }} />
               {!/^#[\da-f]{6}$/i.test(hex) && <Text accessibilityRole="alert" style={styles.error}>Enter a 6 digit hex color, such as #163D59.</Text>}
             </View>}
             <Text style={[styles.subtitle, { color: theme.colors.muted }]}>Applying a theme restarts the app and returns to the intro. Your custom home video stays selected.</Text>
@@ -132,6 +133,7 @@ export default function ThemePicker({ onClose }) {
   );
 }
 
+/** @param {string} hex */
 function getContrastColor(hex) {
   const values = [1, 3, 5].map((index) => parseInt(hex.slice(index, index + 2), 16) / 255);
   const linear = values.map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);

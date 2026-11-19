@@ -4,17 +4,21 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 const HUES = ['#ff0000', '#ff00ff', '#0000ff', '#00ffff', '#00ff00', '#ffff00', '#ff0000'];
 
+/** @typedef {{ h: number, s: number, v: number }} HSV */
+/** @param {{ color: string, onChange: (color: string) => void, disabled: boolean }} props */
 export default function CustomColorPicker({ color, onChange, disabled }) {
   const [fieldSize, setFieldSize] = useState({ width: 1, height: 1 });
   const [hueWidth, setHueWidth] = useState(1);
   const hsv = hexToHsv(color);
   const hueColor = hsvToHex({ h: hsv.h, s: 1, v: 1 });
 
+  /** @param {number} x @param {number} y */
   const setFromField = (x, y) => {
     const s = clamp(x / fieldSize.width);
     const v = 1 - clamp(y / fieldSize.height);
     onChange(hsvToHex({ ...hsv, s, v }));
   };
+  /** @param {number} x */
   const setFromHue = (x) => onChange(hsvToHex({ ...hsv, h: clamp(x / hueWidth) * 360 }));
 
   return (
@@ -76,6 +80,7 @@ export default function CustomColorPicker({ color, onChange, disabled }) {
   );
 }
 
+/** @param {string} hex @returns {HSV} */
 function hexToHsv(hex) {
   const value = hex.replace('#', '');
   const [r, g, b] = [0, 2, 4].map((index) => parseInt(value.slice(index, index + 2), 16) / 255);
@@ -92,6 +97,7 @@ function hexToHsv(hex) {
   return { h, s: max === 0 ? 0 : delta / max, v: max };
 }
 
+/** @param {HSV} hsv */
 function hsvToHex({ h, s, v }) {
   const chroma = v * s;
   const x = chroma * (1 - Math.abs((h / 60) % 2 - 1));
@@ -100,6 +106,7 @@ function hsvToHex({ h, s, v }) {
   return '#' + rgb.map((channel) => Math.round((channel + m) * 255).toString(16).padStart(2, '0')).join('').toUpperCase();
 }
 
+/** @param {number} value */
 const clamp = (value) => Math.max(0, Math.min(1, value));
 
 const styles = StyleSheet.create({

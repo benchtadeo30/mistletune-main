@@ -178,6 +178,7 @@ async function readMp3Tags(file) {
       albumArtist: readFrameText(tag, 'TPE2'),
       title: readFrameText(tag, 'TIT2'),
       album: readFrameText(tag, 'TALB'),
+      isrc: readFrameText(tag, 'TSRC'),
       durationSeconds: Number.isFinite(taggedDuration) && taggedDuration > 0
         ? Math.round(taggedDuration)
         : estimateMp3Duration(frameHeader, file.size ?? 0, audioOffset),
@@ -206,6 +207,7 @@ async function toTrack(file) {
     artist: includeFeaturedArtists(artist, title),
     album: tags.album || null,
     albumArtist: tags.albumArtist || artist,
+    isrc: tags.isrc || null,
     durationSeconds: tags.durationSeconds ?? null,
     kind: 'Music',
     source: file.uri,

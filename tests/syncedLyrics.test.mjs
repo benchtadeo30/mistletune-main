@@ -4,6 +4,21 @@ import test from 'node:test';
 const source = await readFile(new URL('../components/syncedLyricsUtils.js', import.meta.url), 'utf8');
 const { activeSegmentIndex, importedSegments, lyricBoundaries, lyricTimeAt } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const segments = [{ start: 2, end: 4, text: 'A' }, { start: 7, end: 10, text: 'B' }];
+test('word spacing follows the downloaded line while preserving syllable timing and pauses', () => {
+  const line = { time: 1, end: 5, text: 'Golden sky!', words: [
+    { word: 'Gol', start: 1, end: 1.5 }, { word: 'den', start: 1.5, end: 2 },
+    { word: 'sky!', start: 4, end: 5 },
+  ] };
+  assert.deepEqual(importedSegments([line], 5)[0].words, [
+    { word: 'Golden', start: 1, end: 2 }, { word: 'sky!', start: 4, end: 5 },
+  ]);
+  const cached = { ...line, words: [{ word: 'Goldensky!', start: 1, end: 5 }] };
+  const repaired = importedSegments([cached], 5)[0];
+  assert.deepEqual(repaired.words.map(word => word.word), ['Golden', 'sky!']);
+  assert.equal(repaired.words[0].end, repaired.words[1].start);
+  assert.equal(repaired.words[1].end, 5);
+  assert.equal(repaired.wordTimingEstimated, true);
+});
 test('timestamp boundaries and instrumental gaps do not retain a stale highlighted line', () => {
   assert.equal(activeSegmentIndex(segments, 0), -1);
   assert.equal(activeSegmentIndex(segments, 2), 0);
@@ -67,8 +82,30 @@ test('seeking backward or forward recomputes the active line without playback hi
   assert.equal(activeSegmentIndex([], 5), -1);
   assert.equal(activeSegmentIndex(segments, NaN), -1);
 });
-test('imported LRC keeps timestamps and uses track duration for the final line', () => {
-  assert.deepEqual(importedSegments([{ time: 1, text: 'A' }, { time: 3, text: 'B' }], 7), [{ start: 1, end: 3, text: 'A' }, { start: 3, end: 7, text: 'B' }]);
+test('imported LRC keeps timestamps and estimates karaoke words through track duration', () => {
+  const result = importedSegments([{ time: 1, text: 'A' }, { time: 3, text: 'B' }], 7);
+  assert.deepEqual(result.map(({ start, end, text }) => ({ start, end, text })), [{ start: 1, end: 3, text: 'A' }, { start: 3, end: 7, text: 'B' }]);
+  assert.deepEqual(result[0].words, [{ word: 'A', start: 1, end: 3, estimated: true }]);
+  assert.deepEqual(result[1].words, [{ word: 'B', start: 3, end: 7, estimated: true }]);
+});
+
+test('supplied word ends preserve vocal silence and line-only lyrics get estimated timings', () => {
+  const result = importedSegments([
+    { time: 2, end: 5, text: 'One two', words: [{ word: 'One', start: 2, end: 2.5 }, { word: 'two', start: 4, end: 5 }] },
+    { time: 5, text: '♪' }, { time: 7, text: 'A longer word' },
+  ], 10);
+  assert.equal(result[0].words[0].end, 2.5);
+  assert.equal(result[1].words, undefined);
+  assert.deepEqual(result[2].words.map(({ word }) => word), ['A', 'longer', 'word']);
+  assert.equal(result[2].wordTimingEstimated, true);
+  assert.equal(result[2].start, 7);
+  assert.equal(result[2].end, 10);
+});
+
+test('duplicate timestamps and unknown duration never produce invalid word intervals', () => {
+  const result = importedSegments([{ time: 1, text: 'A' }, { time: 1, text: 'B' }, { time: 5, text: 'Last line' }], 0);
+  assert.ok(result.every((line) => line.end > line.start));
+  assert.ok(result.at(-1).words.every((word) => word.end > word.start));
 });
 
 test('per-song delay correction advances lyrics and keeps lyric taps aligned', () => {
